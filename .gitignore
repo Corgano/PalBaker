@@ -38,3 +38,9 @@ pytest_cache/
 # OS junk
 .DS_Store
 Thumbs.db
+
+node_modules
+package-lock.json
+package.json
+dump.mjs
+dump.txt

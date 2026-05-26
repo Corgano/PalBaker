@@ -17,6 +17,13 @@ def open_folder(path: str):
         else:
             subprocess.Popen(['xdg-open', path])
 
+def safe_update(control):
+    """Safely updates a Flet control, bypassing the RuntimeError if it is not mounted yet."""
+    try:
+        control.update()
+    except Exception:
+        pass
+
 class ModItem: # Decoupled plain Python class to bypass Flet subclassing bugs
     def __init__(self, mod_data: dict, on_action_click, on_cancel_click, is_building: bool, show_mapped: bool):
         self.mod_data = mod_data
@@ -154,8 +161,7 @@ class ModItem: # Decoupled plain Python class to bypass Flet subclassing bugs
     def set_show_mapped(self, show_mapped: bool):
         self.show_mapped = show_mapped
         self.name_text.value = self.get_display_name()
-        if self.name_text.page:
-            self.name_text.update()
+        safe_update(self.name_text)
 
     def set_state(self, global_building: bool, is_active_target: bool = False, success: bool = None):
         """Changes the visual state of the item based on what is building."""
@@ -195,25 +201,19 @@ class ModItem: # Decoupled plain Python class to bypass Flet subclassing bugs
                 def reset_border():
                     time.sleep(2.5)
                     self.container.border = ft.Border.all(1, ft.Colors.WHITE24)
-                    try: 
-                        if self.view.page: self.view.update() 
-                    except: pass
+                    safe_update(self.view)
                 threading.Thread(target=reset_border, daemon=True).start()
             elif success is False:
                 self.container.border = ft.Border.all(1, ft.Colors.RED_500)
                 def reset_border():
                     time.sleep(2.5)
                     self.container.border = ft.Border.all(1, ft.Colors.WHITE24)
-                    try: 
-                        if self.view.page: self.view.update() 
-                    except: pass
+                    safe_update(self.view)
                 threading.Thread(target=reset_border, daemon=True).start()
                 
-        if self.view.page:
-            try: self.view.update()
-            except: pass
+        safe_update(self.view)
 
-    def update_progress(self, line: str):
+    def update_progress(self, line: str, flush: bool = True):
         """Value parser for the progress bar."""
         line = line.strip()
         if not line: return
@@ -253,6 +253,5 @@ class ModItem: # Decoupled plain Python class to bypass Flet subclassing bugs
             self.progress_bar.value = 0.95
             self.status_text.value = "[4/4] Generating .pak file..."
             
-        if self.view.page:
-            try: self.view.update()
-            except: pass
+        if flush:
+            safe_update(self.view)

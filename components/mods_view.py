@@ -3,6 +3,7 @@ import os
 import sys
 import subprocess
 import threading
+import time
 from utils import get_mod_info
 from components.mod_item import ModItem
 
@@ -113,7 +114,7 @@ class ModsView:
         fmodel_dir = str(self.settings.get("fmodel_output", ""))
         if not fmodel_dir or not os.path.exists(fmodel_dir):
             self.mods_list.controls.append(ft.Text("Set a valid FModel Output Folder in Settings.", color=ft.Colors.RED_400))
-            self.main_page.update()
+            self.view.update()
             return
 
         filtered_items = []
@@ -144,7 +145,7 @@ class ModsView:
         else:
             self.mods_list.controls.extend([item.view for item in filtered_items])
             
-        self.main_page.update()
+        self.view.update()
 
     def handle_action(self, mod_data, action):
         if self.is_building: return
@@ -181,9 +182,10 @@ class ModsView:
             except Exception as e:
                 self.write_log(f"Error terminating process: {e}", ft.Colors.RED_400)
 
-    def write_log(self, text, color=ft.Colors.WHITE70):
+    def write_log(self, text, color=ft.Colors.WHITE70, flush: bool = True):
         self.log_view.controls.append(ft.Text(text, color=color, size=12, font_family="Consolas"))
-        self.main_page.update()
+        if flush:
+            self.view.update()
 
     def execute_pipeline(self, mod_data, action):
         self.is_building = True
@@ -209,23 +211,37 @@ class ModsView:
             
             self.active_process = process
 
+            last_update_time = time.time()
+            update_pending = False
+
             if process.stdout:
                 for line in iter(process.stdout.readline, ''):
                     if not line: break
-                    self.write_log(line.strip())
+                    # Append log line to UI list model silently without immediate websocket update
+                    self.write_log(line.strip(), flush=False)
                     
+                    # Update progress bar variables silently
                     for item in self.cached_items:
                         if getattr(item, "mod_data")["name"] == self.active_mod_name:
-                            item.update_progress(line)
+                            item.update_progress(line, flush=False)
                             break
+                    
+                    update_pending = True
+                    
+                    # Throttle websocket updates to a maximum of 10 times per second (100ms interval)
+                    current_time = time.time()
+                    if current_time - last_update_time >= 0.10:
+                        self.view.update()
+                        last_update_time = current_time
+                        update_pending = False
 
             process.wait()
             success = (process.returncode == 0)
             
             if success:
-                self.write_log("SUCCESS: Operation completed.", ft.Colors.GREEN_400)
+                self.write_log("SUCCESS: Operation completed.", ft.Colors.GREEN_400, flush=False)
             else:
-                self.write_log(f"Process terminated with exit code {process.returncode}", ft.Colors.RED_400)
+                self.write_log(f"Process terminated with exit code {process.returncode}", ft.Colors.RED_400, flush=False)
             
             self.is_building = False
             self.active_process = None
@@ -236,6 +252,8 @@ class ModsView:
                     break
                     
             self.active_mod_name = ""
+            
+            # Final refresh triggers full view update
             self.refresh_mods(scan_disk=True)
 
         threading.Thread(target=run_thread, daemon=True).start()
