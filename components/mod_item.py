@@ -178,6 +178,7 @@ class ModItem: # Decoupled plain Python class to bypass Flet subclassing bugs
             self.status_text.value = "Starting pipeline..."
             self.container.border = ft.Border.all(1, ft.Colors.CYAN_700)
             
+            # Switch primary button to Cancel
             self.primary_button.text = "Cancel"
             self.primary_button.icon = ft.Icons.CANCEL
             self.primary_button.style = ft.ButtonStyle(color=ft.Colors.RED_400)
