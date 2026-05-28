@@ -133,6 +133,9 @@ class ModItem: # Decoupled plain Python class to bypass Flet subclassing bugs
         if self.is_building:
             if self.on_cancel_click:
                 self.on_cancel_click()
+        # FIXED: Route create_blend to the background orchestrator instead of just opening the folder
+        elif self.primary_action == "create_blend":
+            self.on_action_click(self.mod_data, "create_blend")
         elif self.primary_action == "open_folder":
             open_folder(self.mod_data["fmodel_path"])
         else:
@@ -150,9 +153,10 @@ class ModItem: # Decoupled plain Python class to bypass Flet subclassing bugs
                 self.primary_action = "cook"
                 self.primary_icon = ft.Icons.FAST_FORWARD
         elif self.mod_data["has_fmodel"]:
+            # FIXED: Set the primary action to run our headless decompiler
             if not self.mod_data.get("has_blend", False):
                 self.primary_text = "Create .blend file"
-                self.primary_action = "open_folder"
+                self.primary_action = "create_blend"
                 self.primary_icon = ft.Icons.CREATE_NEW_FOLDER
             else:
                 self.primary_text = "Push to Unreal"

@@ -2,160 +2,103 @@ import os
 import sys
 import glob
 import json
-import subprocess
-import time
 import shutil
+from utils.builder.config_helper import inject_packaging_settings
+from utils.builder.blender_helper import run_headless_blender
+from utils.builder.unreal_helper import run_remote_import
+from utils.builder.cooker_helper import run_and_stream, pack_cooked_assets
 
-if len(sys.argv) < 4:
-    print("ERROR: Missing arguments. Usage: build_mod.py <name> <category> <action>")
-    sys.exit(1)
-
-MONSTER_NAME = sys.argv[1]
-CATEGORY = sys.argv[2] 
-ACTION = sys.argv[3]   
-
-SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "manager_settings.json")
-
-with open(SETTINGS_FILE, "r") as f:
-    settings = json.load(f)
-
-FMODEL_ROOT = settings.get("fmodel_output", "")
-UE_ROOT = settings.get("ue_root", "")
-UPROJECT_PATH = settings.get("uproject", "")
-BLENDER_PATH = settings.get("blender", "blender")
-PW_EXE = settings.get("palworld_exe", "")
-
-# Path Computations
-UE_CMD_PATH = os.path.join(UE_ROOT, "Engine", "Binaries", "Win64", "UnrealEditor-Cmd.exe")
-UNREALPAK_PATH = os.path.join(UE_ROOT, "Engine", "Binaries", "Win64", "UnrealPak.exe")
-UE_PYTHON_DIR = os.path.join(UE_ROOT, "Engine", "Plugins", "Experimental", "PythonScriptPlugin", "Content", "Python")
-
-# Absolute paths
-FMODEL_DIR = os.path.join(FMODEL_ROOT, "Exports", "Pal", "Content", "Pal", "Model", "Character", CATEGORY, MONSTER_NAME)
-UE_VIRTUAL_PATH = f"/Game/Pal/Model/Character/{CATEGORY}/{MONSTER_NAME}"
-SKELETON_VIRTUAL_PATH = f"/Game/Pal/Model/Character/Skeleton/{MONSTER_NAME}"
-ANIMS_VIRTUAL_PATH = f"/Game/Pal/Animation/Character/Monster/{MONSTER_NAME}"
-
-sys.path.append(UE_PYTHON_DIR)
-try:
-    import remote_execution  # type: ignore
-except ImportError:
-    print(f"ERROR: Could not find remote_execution.py in {UE_PYTHON_DIR}")
-    sys.exit(1)
-
-try:
-    from utils.state import save_push_state
-except ImportError:
-    sys.path.append(os.path.dirname(__file__))
-    from utils.state import save_push_state
-
-def run_and_stream(cmd_args):
-    """Executes a command and streams its output in absolute real-time to stdout."""
-    process = subprocess.Popen(
-        cmd_args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding='utf-8',
-        errors='replace',
-        bufsize=1 # Line-buffered
-    )
-    if process.stdout:
-        for line in iter(process.stdout.readline, ''):
-            if not line: break
-            print(line.strip(), flush=True) 
-            
-    process.wait()
-    if process.returncode != 0:
-        raise subprocess.CalledProcessError(process.returncode, cmd_args)
-
-def inject_packaging_settings(ini_path, has_anims):
-    if not os.path.exists(ini_path):
-        return
-    with open(ini_path, "r", encoding="utf-8-sig", errors="replace") as f:
-        lines = f.readlines()
-        
-    new_lines = []
-    in_section = False
-    section_found = False
-    section_header = "[/Script/UnrealEd.ProjectPackagingSettings]"
-    
-    keys_to_override = [
-        "DirectoriesToAlwaysCook", "+DirectoriesToAlwaysCook", "-DirectoriesToAlwaysCook",
-        "bCookAll", "bUseIoStore", "bShareMaterialShaderCode", "MapsToCook", "+MapsToCook", "-MapsToCook"
-    ]
-    
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            if stripped.lower() == section_header.lower():
-                in_section = True
-                section_found = True
-                new_lines.append(line)
-                new_lines.append("bCookAll=False\n")
-                new_lines.append("bUseIoStore=False\n")
-                new_lines.append("bShareMaterialShaderCode=False\n")
-                new_lines.append(f'+DirectoriesToAlwaysCook=(Path="{UE_VIRTUAL_PATH}")\n')
-                new_lines.append(f'+DirectoriesToAlwaysCook=(Path="{SKELETON_VIRTUAL_PATH}")\n')
-                if has_anims:
-                    new_lines.append(f'+DirectoriesToAlwaysCook=(Path="{ANIMS_VIRTUAL_PATH}")\n')
-                new_lines.append("MapsToCook=\n")
-                continue
-            else:
-                in_section = False
-                
-        if in_section:
-            if any(stripped.startswith(k) for k in keys_to_override):
-                continue
-        new_lines.append(line)
-        
-    if not section_found:
-        new_lines.append("\n" + section_header + "\n")
-        new_lines.append("bCookAll=False\n")
-        new_lines.append("bUseIoStore=False\n")
-        new_lines.append("bShareMaterialShaderCode=False\n")
-        new_lines.append(f'+DirectoriesToAlwaysCook=(Path="{UE_VIRTUAL_PATH}")\n')
-        new_lines.append(f'+DirectoriesToAlwaysCook=(Path="{SKELETON_VIRTUAL_PATH}")\n')
-        if has_anims:
-            new_lines.append(f'+DirectoriesToAlwaysCook=(Path="{ANIMS_VIRTUAL_PATH}")\n')
-        
-    with open(ini_path, "w", encoding="utf-8") as f:
-        f.writelines(new_lines)
+# Force standard output stream to use UTF-8. 
+# This completely prevents "UnicodeEncodeError: 'charmap' codec can't encode characters" crashes in Windows terminals.
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding='utf-8')
 
 def main():
+    if len(sys.argv) < 4:
+        print("ERROR: Missing arguments. Usage: build_mod.py <name> <category> <action>")
+        sys.exit(1)
+
+    MONSTER_NAME = sys.argv[1]
+    CATEGORY = sys.argv[2] 
+    ACTION = sys.argv[3]   
+
+    SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "manager_settings.json")
+    with open(SETTINGS_FILE, "r") as f:
+        settings = json.load(f)
+
+    FMODEL_ROOT = settings.get("fmodel_output", "")
+    UE_ROOT = settings.get("ue_root", "")
+    UPROJECT_PATH = settings.get("uproject", "")
+    BLENDER_PATH = settings.get("blender", "blender")
+    PW_EXE = settings.get("palworld_exe", "")
+
+    # Path Computations
+    UE_CMD_PATH = os.path.join(UE_ROOT, "Engine", "Binaries", "Win64", "UnrealEditor-Cmd.exe")
+    UNREALPAK_PATH = os.path.join(UE_ROOT, "Engine", "Binaries", "Win64", "UnrealPak.exe")
+
+    # Absolute paths
+    FMODEL_DIR = os.path.join(FMODEL_ROOT, "Exports", "Pal", "Content", "Pal", "Model", "Character", CATEGORY, MONSTER_NAME)
+    UE_VIRTUAL_PATH = f"/Game/Pal/Model/Character/{CATEGORY}/{MONSTER_NAME}"
+    SKELETON_VIRTUAL_PATH = f"/Game/Pal/Model/Character/Skeleton/{MONSTER_NAME}"
+    ANIMS_VIRTUAL_PATH = f"/Game/Pal/Animation/Character/Monster/{MONSTER_NAME}"
+
     project_dir = os.path.dirname(UPROJECT_PATH)
     target_project_name = os.path.splitext(os.path.basename(UPROJECT_PATH))[0]
     
-    # Ensure the Config directory and DefaultGame.ini exist for brand-new blank projects
+    # Ensure project config directory is initialized
     config_dir = os.path.join(project_dir, "Config")
     os.makedirs(config_dir, exist_ok=True)
-    
     ini_path = os.path.join(config_dir, "DefaultGame.ini")
-    if not os.path.exists(ini_path):
-        with open(ini_path, "w", encoding="utf-8") as f:
-            f.write("[/Script/UnrealEd.ProjectPackagingSettings]\n")
-            
     ini_backup = os.path.join(config_dir, "DefaultGame.ini.bak")
 
-    # Check if custom animations are present inside the ModKit
+    # Detect animations in project
     anims_source_dir = os.path.join(project_dir, "Content", "Pal", "Animation", "Character", "Monster", MONSTER_NAME)
     has_anims = os.path.exists(anims_source_dir)
 
-    # Determine Output directory
+    # Output directory resolution
     output_dir = FMODEL_DIR if os.path.exists(FMODEL_DIR) else project_dir
     if PW_EXE and os.path.exists(PW_EXE):
         output_dir = os.path.join(os.path.dirname(PW_EXE), "Pal", "Content", "Paks", "palBaker")
         os.makedirs(output_dir, exist_ok=True)
-        
     output_pak = os.path.join(output_dir, f"{MONSTER_NAME}_P.pak")
 
-    if ACTION in ["cook", "full"]:
-        if os.path.exists(output_pak):
-            try:
-                os.remove(output_pak)
-            except OSError:
-                print(f"CRITICAL ERROR: Cannot overwrite '{output_pak}'. Close the game!")
-                sys.exit(1)
+    # -------------------------------------------------------------
+    # PHASE 0: RAW FMODEL DECOMPILE (Create .blend file)
+    # -------------------------------------------------------------
+    if ACTION == "create_blend":
+        psk_files = glob.glob(os.path.join(FMODEL_DIR, "*.psk"))
+        if not psk_files:
+            print("ERROR: No .psk skeletal mesh found in FModel directory.", flush=True)
+            sys.exit(1)
+            
+        psk_file = psk_files[0]
+        blend_file = os.path.join(FMODEL_DIR, f"{MONSTER_NAME}.blend")
+        reconstructor_script = os.path.join(os.path.dirname(__file__), "utils", "blender_reconstruct.py")
+        
+        psk_file_clean = psk_file.replace("\\", "/")
+        blend_file_clean = blend_file.replace("\\", "/")
+        
+        print("Launching headless Blender to reconstruct .blend workspace from .psk...", flush=True)
+        result = run_headless_blender(
+            BLENDER_PATH, 
+            None, 
+            reconstructor_script, 
+            ["--fbx", psk_file_clean, "--output", blend_file_clean]
+        )
+        
+        if os.path.exists(blend_file):
+            print(f"SUCCESS! .blend file generated at: {blend_file}", flush=True)
+            # FIXED: Always print Blender's output stream so we can see the decompiler diagnostics
+            if result.stdout.strip():
+                print("\n=== BLENDER PIPELINE LOGS ===", flush=True)
+                print(result.stdout, flush=True)
+                print("=============================\n", flush=True)
+        else:
+            print("ERROR: Blender executed but failed to save .blend file. Internal traceback:", flush=True)
+            print(result.stdout, flush=True)
+            print(result.stderr, flush=True)
+            sys.exit(1)
+
 
     # -------------------------------------------------------------
     # PHASE 1: IMPORT (Push to Unreal)
@@ -175,14 +118,7 @@ def main():
             output_json = os.path.join(FMODEL_DIR, "bone_data.json")
             
             print("Running headless Blender (Extracting Rigging & Exporting FBX)...", flush=True)
-            subprocess.run([
-                BLENDER_PATH, 
-                "-b", blend_file, 
-                "--python", extractor_script, 
-                "--", 
-                "--output", output_json, 
-                "--fbx", fbx_file
-            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            run_headless_blender(BLENDER_PATH, blend_file, extractor_script, ["--output", output_json, "--fbx", fbx_file])
 
         pngs = glob.glob(os.path.join(FMODEL_DIR, "*.png"))
         jsons = glob.glob(os.path.join(FMODEL_DIR, "MI_*.json"))
@@ -197,38 +133,16 @@ def main():
         with open(config_path, "w") as f:
             json.dump(config, f)
 
+        # FIXED: Call the modularized remote execution import library
         print("Connecting to Open Unreal Engine...", flush=True)
-        remote_exec = remote_execution.RemoteExecution()
-        remote_exec.start()
-        time.sleep(2.0)
+        ue_import_script = os.path.join(os.path.dirname(__file__), "ue_import.py")
+        success, log_msg = run_remote_import(UE_ROOT, target_project_name, FMODEL_DIR, ue_import_script)
         
-        node = next((n for n in remote_exec.remote_nodes if n.get('project_name', '').lower() == target_project_name.lower()), None)
-        if not node:
-            print("ERROR: Unreal Editor is not running. Please open it first!")
-            sys.exit(1)
+        if log_msg.strip():
+            print(log_msg, flush=True)
             
-        remote_exec.open_command_connection(node.get('node_id'))
-        
-        ue_script_path = os.path.join(os.path.dirname(__file__), "ue_import.py").replace("\\", "/")
-        print("Injecting import commands...", flush=True)
-        
-        cmd = f'TARGET_FOLDER = r"{FMODEL_DIR}"; PALBAKER_ROOT = r"{os.path.dirname(__file__).replace("\\", "/")}"; exec(open(r"{ue_script_path}").read())'
-        response = remote_exec.run_command(cmd)
-        remote_exec.stop()
-
-        if response is not None:
-            if response.get('output'):
-                for log_entry in response['output']:
-                    log_text = log_entry.get('output', '') if isinstance(log_entry, dict) else str(log_entry)
-                    if log_text.strip():
-                        print(log_text.rstrip(), flush=True)
-
-            if not response.get('success'):
-                print("!!! ERROR INSIDE UNREAL ENGINE !!!", flush=True)
-                print(response.get('result'), flush=True)
-                sys.exit(1)
-        else:
-            print("ERROR: No response received from Unreal Engine remote execution. Check if the editor is frozen.", flush=True)
+        if not success:
+            print("!!! ERROR INSIDE UNREAL ENGINE !!!", flush=True)
             sys.exit(1)
 
         ue_abs_path = os.path.join(project_dir, "Content", "Pal", "Model", "Character", CATEGORY, MONSTER_NAME)
@@ -238,13 +152,20 @@ def main():
     # PHASE 2: COOK & PACK
     # -------------------------------------------------------------
     if ACTION in ["cook", "full"]:
+        if ACTION == "cook":
+            if os.path.exists(output_pak):
+                try:
+                    os.remove(output_pak)
+                except OSError:
+                    print(f"CRITICAL ERROR: Cannot overwrite '{output_pak}'. Close the game!")
+                    sys.exit(1)
+
         rel_ue_path = UE_VIRTUAL_PATH.replace("/Game/", "").replace("/", os.sep)
         cooked_dir = os.path.join(project_dir, "Saved", "Cooked", "Windows", target_project_name, "Content", rel_ue_path)
         
         rel_skel_path = SKELETON_VIRTUAL_PATH.replace("/Game/", "").replace("/", os.sep)
         cooked_skel_dir = os.path.join(project_dir, "Saved", "Cooked", "Windows", target_project_name, "Content", rel_skel_path)
 
-        # Compute cooked animations path
         rel_anims_path = ANIMS_VIRTUAL_PATH.replace("/Game/", "").replace("/", os.sep)
         cooked_anims_dir = os.path.join(project_dir, "Saved", "Cooked", "Windows", target_project_name, "Content", rel_anims_path)
         
@@ -263,49 +184,26 @@ def main():
             print("Preparing Pak (Filtering out Skeleton and Physics)...", flush=True)
             response_file = os.path.join(output_dir, "response.txt")
             
-            # FIXED: Always include both model and skeleton directories so that the 
-            # custom Animation Blueprint is always shipped.
             folders_to_pack = [
                 (cooked_dir, UE_VIRTUAL_PATH.replace("/Game/", "")),
                 (cooked_skel_dir, SKELETON_VIRTUAL_PATH.replace("/Game/", ""))
             ]
             
-            # The animations directory is appended to the targets only if custom animations exist
             if has_anims:
                 folders_to_pack.append((cooked_anims_dir, ANIMS_VIRTUAL_PATH.replace("/Game/", "")))
                 print("  -> Custom animations detected: Shipping complete Skeleton, Animation, and BP assets.", flush=True)
             else:
                 print("  -> No custom animations: Shipping BP assets, but stripping Skeleton asset to prevent ragdoll glitches.", flush=True)
 
-            files_found = 0
+            print(f"Building final PAK...", flush=True)
+            # FIXED: Call the modularized packaging engine
+            files_found = pack_cooked_assets(UNREALPAK_PATH, response_file, output_pak, folders_to_pack, has_anims)
             
-            with open(response_file, "w") as f:
-                for c_dir, v_path in folders_to_pack:
-                    if os.path.exists(c_dir):
-                        for root, dirs, files in os.walk(c_dir):
-                            for file in files:
-                                if file.endswith((".uasset", ".uexp", ".ubulk")):
-                                    # PhysicsAsset is always excluded from paks (handled via in-editor references)
-                                    if "PhysicsAsset" in file:
-                                        continue
-                                    
-                                    # FIXED: Strip skeleton files ONLY if has_anims is False (Animation Blueprint is preserved) [1]
-                                    if "Skeleton" in file and not has_anims:
-                                        continue
-                                        
-                                    abs_path = os.path.join(root, file)
-                                    rel_to_cooked = os.path.relpath(abs_path, c_dir)
-                                    rel_virtual = "../../../Pal/Content/" + v_path + "/" + rel_to_cooked.replace("\\", "/")
-                                    f.write(f'"{abs_path}" "{rel_virtual}"\n')
-                                    files_found += 1
-                                    
             if files_found == 0:
                 print("ERROR: No files found to pack. Cook process might have failed.", flush=True)
                 sys.exit(1)
-
-            print(f"Building final PAK ({files_found} files)...", flush=True)
-            run_and_stream([UNREALPAK_PATH, output_pak, f"-Create={response_file}"])
-            print(f"SUCCESS! Pak created at: {output_pak}", flush=True)
+                
+            print(f"SUCCESS! Pak created at: {output_pak} ({files_found} files)", flush=True)
 
         finally:
             if os.path.exists(ini_backup):

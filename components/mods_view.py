@@ -6,7 +6,6 @@ import subprocess
 import time
 from utils import get_mod_info
 from components.mod_item import ModItem
-from utils.plugins.decompiler import run_decompile_pipeline
 
 class ModsView:
     def __init__(self, page: ft.Page, settings: dict):
@@ -50,9 +49,23 @@ class ModsView:
             ft.Chip(label=ft.Text("Outdated"), on_select=lambda e: self.on_status_select("Outdated", e)),
         ], spacing=10)
 
+        # FIXED: Declared named references to manage the state of the refresh controls
+        self.refresh_button = ft.IconButton(
+            icon=ft.Icons.REFRESH, 
+            tooltip="Rescan disk for mods",
+            on_click=lambda e: self.refresh_mods(scan_disk=True)
+        )
+        self.refresh_spinner = ft.ProgressRing(
+            width=16, 
+            height=16, 
+            stroke_width=2, 
+            visible=False
+        )
+
         row_controls: list[ft.Control] = [
             self.search_bar,
-            ft.IconButton(ft.Icons.REFRESH, on_click=lambda e: self.refresh_mods(scan_disk=True))
+            self.refresh_spinner,
+            self.refresh_button
         ]
 
         self.console_container = ft.Container(
@@ -122,25 +135,37 @@ class ModsView:
         self.show_mapped = bool(self.settings.get("show_mapped", False))
 
         if scan_disk:
-            self.raw_mods = get_mod_info(self.settings)
-            self.cached_items.clear()
-            for mod_data in self.raw_mods:
-                self.cached_items.append(
-                    ModItem(
-                        mod_data, 
-                        on_action_click=self.handle_action, 
-                        on_cancel_click=self.handle_cancel,
-                        is_building=self.is_building,
-                        show_mapped=self.show_mapped
+            # FIXED: Disable button and show spinner to indicate progress immediately
+            self.refresh_button.disabled = True
+            self.refresh_spinner.visible = True
+            self.force_update()
+
+            # Run disk I/O on a background thread to prevent UI freezing/stuttering
+            def worker():
+                self.raw_mods = get_mod_info(self.settings)
+                self.cached_items.clear()
+                for mod_data in self.raw_mods:
+                    self.cached_items.append(
+                        ModItem(
+                            mod_data, 
+                            on_action_click=self.handle_action, 
+                            on_cancel_click=self.handle_cancel,
+                            is_building=self.is_building,
+                            show_mapped=self.show_mapped
+                        )
                     )
-                )
+                # Re-enable controls
+                self.refresh_button.disabled = False
+                self.refresh_spinner.visible = False
+                self.apply_filters()
+
+            self.main_page.run_thread(worker)
         else:
             for item in self.cached_items:
                 item.set_show_mapped(self.show_mapped)
                 is_active = (getattr(item, "mod_data")["name"] == self.active_mod_name)
                 item.set_state(global_building=self.is_building, is_active_target=is_active)
-
-        self.apply_filters()
+            self.apply_filters()
 
     def force_update(self):
         """Forces the update of the main view component."""
@@ -191,7 +216,6 @@ class ModsView:
     def handle_action(self, mod_data, action):
         if self.is_building: return
 
-        # WARNING: MANUALLY MODIFIED FILES DIALOG
         if action in ["push", "full"] and mod_data.get("ue_modified"):
             def confirm(e):
                 self.main_page.pop_dialog()
@@ -215,36 +239,6 @@ class ModsView:
                 actions=[
                     ft.TextButton("Cancel", on_click=cancel),
                     ft.TextButton("Overwrite & Proceed", on_click=confirm, style=ft.ButtonStyle(color=ft.Colors.RED)),
-                ]
-            )
-            self.main_page.show_dialog(dlg)
-
-        # NEW: GENERATE SOURCES MODAL CHOICE
-        elif action == "decompile":
-            def on_missing_only(e):
-                self.main_page.pop_dialog()
-                self.execute_decompile_pipeline(mod_data, overwrite=False)
-                
-            def on_overwrite_all(e):
-                self.main_page.pop_dialog()
-                self.execute_decompile_pipeline(mod_data, overwrite=True)
-                
-            def on_cancel(e):
-                self.main_page.pop_dialog()
-
-            dlg = ft.AlertDialog(
-                open=True,
-                modal=True,
-                title=ft.Text("Generate Source Assets"),
-                content=ft.Column([
-                    ft.Text("This process will reverse-engineer your ModKit's compiled .uassets back into editable Blender and PNG source files.\n\nChoose an extraction mode:"),
-                    ft.Text(" • Generate Missing Only (Safest — leaves existing files alone)", size=12, color=ft.Colors.WHITE70),
-                    ft.Text(" • Overwrite & Regenerate (Wipes local source folder)", size=12, color=ft.Colors.WHITE70),
-                ], tight=True),
-                actions=[
-                    ft.TextButton("Cancel", on_click=on_cancel),
-                    ft.TextButton("Missing Only", on_click=on_missing_only),
-                    ft.TextButton("Overwrite All", on_click=on_overwrite_all, style=ft.ButtonStyle(color=ft.Colors.RED)),
                 ]
             )
             self.main_page.show_dialog(dlg)
@@ -275,45 +269,9 @@ class ModsView:
         if flush:
             self.force_update()
 
-    def execute_decompile_pipeline(self, mod_data, overwrite: bool = False):
-        """Asynchronously triggers the decompiler routine."""
-        self.is_building = True
-        self.active_mod_name = mod_data["name"]
-        self.refresh_mods(scan_disk=False)
-        self.write_log(f"\n>>> EXECUTING DECOMPILER: {mod_data['name']}", ft.Colors.CYAN_400)
-        
-        async def decompile_task():
-            # Source & target directories
-            fmodel_dir = mod_data["fmodel_path"]
-            # Target path under /Game/
-            ue_virtual_path = f"/Game/Pal/Model/Character/{mod_data['category']}/{mod_data['name']}"
-            
-            # Run the decompile pipeline asynchronously
-            success, msg = await asyncio.to_thread(
-                run_decompile_pipeline,
-                self.settings["ue_root"],
-                self.settings["uproject"],
-                mod_data["name"],
-                fmodel_dir,
-                ue_virtual_path,
-                self.settings["blender"],
-                verbose=True,
-                overwrite=overwrite
-            )
-            
-            if success:
-                self.write_log(f"SUCCESS: {msg}", ft.Colors.GREEN_400)
-            else:
-                self.write_log(f"FAILED: {msg}", ft.Colors.RED_400)
-                
-            self.is_building = False
-            self.active_mod_name = ""
-            self.refresh_mods(scan_disk=True)
-            
-        self.main_page.run_task(decompile_task)
-
     def execute_pipeline(self, mod_data, action):
         self.is_building = True
+        self.log_view.auto_scroll = True  # ENABLE autoscroll during active compiler pipeline
         self.active_mod_name = mod_data["name"]
         self.refresh_mods(scan_disk=False)
         self.write_log(f"\n>>> EXECUTING [{action.upper()}]: {mod_data['name']}", ft.Colors.CYAN_400)
@@ -373,6 +331,7 @@ class ModsView:
                 self.write_log(f"Process terminated with exit code {returncode}", ft.Colors.RED_400, flush=False)
             
             self.is_building = False
+            self.log_view.auto_scroll = False  # DISABLE autoscroll when build completes/terminates
             self.active_process = None
             
             for item in self.cached_items:
