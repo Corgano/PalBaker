@@ -1,0 +1,145 @@
+# controllers/settings_controller.py
+import flet as ft
+import threading
+from utils.config import save_settings
+from utils.builder.config_helper import restore_palbaker_backup
+from utils.plugin_manager import (
+    check_project_requirements, 
+    install_and_compile_plugin, 
+    inject_missing_assets, 
+    enable_remote_execution_settings,
+    enable_cooking_settings,
+    restart_unreal_editor
+)
+
+class SettingsController:
+    def __init__(self, view, settings: dict, on_save_callback):
+        self.view = view
+        self.settings = settings
+        self.on_save_callback = on_save_callback
+
+    async def pick_directory(self, target_picker_component):
+        picker = ft.FilePicker()
+        self.view.main_page.overlay.append(picker)
+        self.view.main_page.update()
+        
+        result = await picker.get_directory_path_async()
+        if result:
+            target_picker_component.set_value(str(result))
+
+    async def pick_file(self, target_picker_component, allowed_extensions=None):
+        picker = ft.FilePicker()
+        self.view.main_page.overlay.append(picker)
+        self.view.main_page.update()
+        
+        result = await picker.pick_files_async(allow_multiple=False, allowed_extensions=allowed_extensions)
+        if result and result.files and result.files[0].path:
+            target_picker_component.set_value(str(result.files[0].path))
+
+    def save_clicked(self, current_paths: dict, show_mapped: bool):
+        self.settings.update(current_paths)
+        self.settings["show_mapped"] = show_mapped
+        save_settings(self.settings)
+
+        # Restore stranded backups if the uproject path changed
+        restore_palbaker_backup(self.settings.get("uproject"))
+
+        # Run verification asynchronously
+        def verify_and_build():
+            def ask_user_modal(title, content_control):
+                result = [False]
+                event = threading.Event()
+
+                def on_yes(e):
+                    result[0] = True
+                    self.view.pop_dialog()
+                    event.set()
+
+                def on_no(e):
+                    result[0] = False
+                    self.view.pop_dialog()
+                    event.set()
+
+                dlg = ft.AlertDialog(
+                    modal=True,
+                    title=ft.Text(title),
+                    content=content_control,
+                    actions=[
+                        ft.TextButton("Cancel", on_click=on_no),
+                        ft.TextButton("Yes, Install", on_click=on_yes, style=ft.ButtonStyle(color=ft.Colors.BLUE)),
+                    ]
+                )
+                self.view.show_dialog(dlg)
+                event.wait()
+                return result[0]
+
+            reqs = check_project_requirements(self.settings.get("ue_root", ""), self.settings.get("uproject", ""))
+
+            if reqs.get("error"):
+                self.view.show_snackbar(reqs["error"], ft.Colors.RED_400)
+                self.on_save_callback()
+                return
+
+            # Plugin Sync
+            if reqs["needs_plugin_sync"] or reqs["needs_compile"]:
+                content = ft.Column([
+                    ft.Text("PalBaker requires a custom C++ Editor Utility Plugin to automatically generate Animation Blueprints via Python."),
+                    ft.Text("The plugin is missing or outdated in your active Unreal Engine project.", color=ft.Colors.ORANGE_400),
+                    ft.Text("Would you like to install and bind it to your ModKit now?", weight=ft.FontWeight.BOLD)
+                ], tight=True)
+
+                if ask_user_modal("Required Plugin Missing", content):
+                    self.view.show_snackbar("Installing and verifying C++ plugin... (This may take a moment)", ft.Colors.WHITE)
+                    success, msg = install_and_compile_plugin(self.settings["ue_root"], self.settings["uproject"])
+                    color = ft.Colors.GREEN_400 if success else ft.Colors.RED_400
+                    self.view.show_snackbar(msg, color)
+
+            # Assets Sync
+            missing_assets = reqs.get("missing_assets", [])
+            if missing_assets:
+                files_controls = [ft.Text(f" • {f}", size=12, color=ft.Colors.WHITE70) for f in missing_assets]
+                files_list = ft.ListView(controls=files_controls, height=150, spacing=2, padding=10)
+                
+                content = ft.Column([
+                    ft.Text("The following core framework assets are missing from your ModKit's Content directory:"),
+                    ft.Container(content=files_list, border=ft.Border.all(1, ft.Colors.WHITE24), border_radius=5),
+                    ft.Text("PalBaker requires these to cleanly bind Material Instances.\nWould you like to inject them into your project automatically?", weight=ft.FontWeight.BOLD)
+                ], tight=True)
+
+                if ask_user_modal("Missing Core Assets", content):
+                    success, msg = inject_missing_assets(self.settings["uproject"])
+                    color = ft.Colors.GREEN_400 if success else ft.Colors.RED_400
+                    self.view.show_snackbar(msg, color)
+
+            # Engine Configurations
+            needs_remote_exec = reqs.get("needs_remote_exec_enable")
+            needs_cooking_setup = reqs.get("needs_cooking_setup")
+
+            if needs_remote_exec or needs_cooking_setup:
+                reasons = []
+                if needs_remote_exec:
+                    reasons.append(" • Enable 'Python Remote Execution' (allows Python script orchestration)")
+                if needs_cooking_setup:
+                    reasons.append(" • Disable 'I/O Store' & 'Material Shader Sharing' (forces compilation to loose .uasset files)")
+
+                content = ft.Column([
+                    ft.Text("PalBaker needs to apply the following required configuration changes to your project's .ini files:"),
+                    ft.Text("\n".join(reasons), color=ft.Colors.ORANGE_400),
+                    ft.Text("Please ensure your work inside Unreal is saved before proceeding! Clicking 'Yes, Install' will write these settings and AUTOMATICALLY restart your Unreal Editor project.", weight=ft.FontWeight.BOLD)
+                ], tight=True)
+
+                if ask_user_modal("Project Configurations Required", content):
+                    if needs_remote_exec:
+                        enable_remote_execution_settings(self.settings["uproject"])
+                    if needs_cooking_setup:
+                        enable_cooking_settings(self.settings["uproject"])
+                        
+                    self.view.show_snackbar("Configurations successfully written. Restarting Unreal Editor...", ft.Colors.WHITE)
+                    restart_success, restart_msg = restart_unreal_editor(self.settings["ue_root"], self.settings["uproject"])
+                    color = ft.Colors.GREEN_400 if restart_success else ft.Colors.RED_400
+                    self.view.show_snackbar(restart_msg, color)
+
+            self.view.show_snackbar("Settings saved and verified!", ft.Colors.GREEN_400)
+            self.on_save_callback()
+
+        threading.Thread(target=verify_and_build, daemon=True).start()

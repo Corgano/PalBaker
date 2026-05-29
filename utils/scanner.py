@@ -1,5 +1,5 @@
+# utils/scanner.py
 import os
-import flet as ft
 from .state import is_ue_modified, is_source_modified
 from .names import get_localized_name
 
@@ -43,36 +43,37 @@ def get_mod_info(settings: dict):
         has_blend = has_fmodel and any(f.endswith(".blend") for f in os.listdir(fmodel_path))
         has_ue = bool(ue_path) and any(f.endswith(".uasset") for f in os.listdir(ue_path))
         
-        # Determine Badges
         if has_fmodel and not has_blend:
-            badges.append(("RAW", ft.Colors.GREY_700))
+            badges.append(("RAW", "#333333"))  # Return hex or simple representations
         if has_blend:
-            badges.append(("SOURCE", ft.Colors.BLUE_700))
+            badges.append(("SOURCE", "#2196F3"))
         if has_ue:
-            badges.append(("UE ASSETS", ft.Colors.ORANGE_700))
+            badges.append(("UE ASSETS", "#FF9800"))
 
-        # Check Source Modifications
         source_modified = is_source_modified(fmodel_path) if (has_fmodel and has_blend) else False
         if source_modified:
-            badges.append(("SRC CHANGED", ft.Colors.BLUE_900))
+            badges.append(("SRC CHANGED", "#0D47A1"))
 
-        # Check UE Modifications
         ue_modified_files = is_ue_modified(fmodel_path, ue_path) if (has_fmodel and has_ue) else []
         ue_modified = len(ue_modified_files) > 0
-        
         if ue_modified:
-            badges.append(("MODIFIED", ft.Colors.RED_700))
+            badges.append(("MODIFIED", "#D32F2F"))
 
-        # Determine Pack Status
+        # --- PERSISTENT THREE-STATE CHECK ---
         pak_status = "Unpacked"
-        pak_color = ft.Colors.RED_400
-        
         pak_path = ""
+        pak_err_path = ""
+        
         if palworld_exe and os.path.exists(palworld_exe):
             pak_path = os.path.join(os.path.dirname(palworld_exe), "Pal", "Content", "Paks", "palBaker", f"{name}_P.pak")
+            pak_err_path = os.path.join(os.path.dirname(palworld_exe), "Pal", "Content", "Paks", "palBaker", f"{name}_err_P.pak")
             
-        if pak_path and os.path.exists(pak_path):
-            pak_mtime = os.path.getmtime(pak_path)
+        has_pak = os.path.exists(pak_path)
+        has_pak_err = os.path.exists(pak_err_path)
+        active_pak_path = pak_path if has_pak else (pak_err_path if has_pak_err else "")
+        
+        if active_pak_path:
+            pak_mtime = os.path.getmtime(active_pak_path)
             outdated = False
             
             if has_fmodel:
@@ -88,17 +89,14 @@ def get_mod_info(settings: dict):
                             
             if outdated:
                 pak_status = "Outdated"
-                pak_color = ft.Colors.ORANGE_400
+            elif has_pak_err:
+                pak_status = "Packed with Errors"
             else:
                 pak_status = "Packed"
-                pak_color = ft.Colors.GREEN_400
-
-# utils/scanner.py (Near the bottom of the iteration block)
 
         data["badges"] = badges
         data["pak_status"] = pak_status
-        data["pak_color"] = pak_color
-        data["pak_path"] = pak_path  # ADDED: Expose path to the context menu
+        data["pak_path"] = active_pak_path
         data["ue_modified"] = ue_modified
         data["ue_modified_files"] = ue_modified_files
         data["source_modified"] = source_modified

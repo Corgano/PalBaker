@@ -1,10 +1,9 @@
-# manager.py (Add helper call to main startup)
-
+# manager.py (Top Imports)
 import flet as ft
 from utils.config import load_settings
-from components.settings_view import SettingsView
-from components.mods_view import ModsView
-from utils.builder.config_helper import restore_palbaker_backup  # Import helper
+from views.settings_view import SettingsView  # UPDATED: Import from views
+from views.mods_view import ModsView          # UPDATED: Import from views
+from utils.builder.config_helper import restore_palbaker_backup
 
 def main(page: ft.Page):
     page.title = "Palworld Baker Mod Manager"

@@ -1,6 +1,6 @@
-# components/mods_view.py
+# views/mods_view.py
 import flet as ft
-from components.mods_controller import ModsController
+from controllers.mods_controller import ModsController
 
 class ModsView:
     def __init__(self, page: ft.Page, settings: dict):
@@ -32,9 +32,11 @@ class ModsView:
         self.status_chips = ft.Row([
             ft.Text("Status:", weight=ft.FontWeight.BOLD),
             ft.Chip(label=ft.Text("Packed"), on_select=lambda e: self.controller.update_status_filter("Packed", e.control.selected)),
+            ft.Chip(label=ft.Text("Packed with Errors"), on_select=lambda e: self.controller.update_status_filter("Packed with Errors", e.control.selected)),  # ADDED: Filter for error-paks
             ft.Chip(label=ft.Text("Unpacked"), on_select=lambda e: self.controller.update_status_filter("Unpacked", e.control.selected)),
             ft.Chip(label=ft.Text("Outdated"), on_select=lambda e: self.controller.update_status_filter("Outdated", e.control.selected)),
         ], spacing=10)
+
 
         self.refresh_button = ft.IconButton(
             icon=ft.Icons.REFRESH, 
@@ -93,7 +95,17 @@ class ModsView:
         self.log_view.auto_scroll = enabled
         self.force_update()
 
-    def write_log(self, text: str, color=ft.Colors.WHITE70, flush: bool = True):
+    def write_log(self, text: str, category: str = "standard", flush: bool = True):
+        """The GUI Adapter: Maps string categories back to Flet UI Colors."""
+        color_map = {
+            "error": ft.Colors.RED_400,
+            "warning": ft.Colors.ORANGE_400,
+            "success": ft.Colors.GREEN_400,
+            "stage": ft.Colors.CYAN_400,
+            "standard": ft.Colors.WHITE70
+        }
+        color = color_map.get(category, ft.Colors.WHITE70)
+        
         self.log_view.controls.append(ft.Text(text, color=color, size=12, font_family="Consolas"))
         
         MAX_LINES = 100
@@ -124,6 +136,10 @@ class ModsView:
     def pop_dialog(self):
         self.main_page.pop_dialog()
 
+    def refresh_mods(self, scan_disk: bool = True):
+        # Point the interface boundary to the controller
+        self.controller.refresh_mods(scan_disk)
+
     def force_update(self):
         try:
             self.view.update()
@@ -131,7 +147,6 @@ class ModsView:
             pass
 
     async def copy_console_to_clipboard(self, e):
-        """Asynchronously gathers all printed lines in log_view and copies them to the system clipboard."""
         log_lines = []
         for ctrl in self.log_view.controls:
             if isinstance(ctrl, ft.Text) and ctrl.value:
@@ -144,7 +159,3 @@ class ModsView:
         else:
             self.main_page.overlay.append(ft.SnackBar(ft.Text("Console is currently empty."), open=True))
         self.main_page.update()
-
-    def refresh_mods(self, scan_disk: bool = True):
-        # Point the interface boundary to the controller
-        self.controller.refresh_mods(scan_disk)

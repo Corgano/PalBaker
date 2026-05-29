@@ -63,7 +63,11 @@ def main():
     if PW_EXE and os.path.exists(PW_EXE):
         output_dir = os.path.join(os.path.dirname(PW_EXE), "Pal", "Content", "Paks", "palBaker")
         os.makedirs(output_dir, exist_ok=True)
-    output_pak = os.path.join(output_dir, f"{MONSTER_NAME}_P.pak")
+        
+    # Configure both clean and error-flagged pak targets
+    output_pak_clean = os.path.join(output_dir, f"{MONSTER_NAME}_P.pak")
+    output_pak_err = os.path.join(output_dir, f"{MONSTER_NAME}_err_P.pak")
+
 
     # -------------------------------------------------------------
     # PHASE 0: RAW FMODEL DECOMPILE (Create .blend file)
@@ -160,12 +164,15 @@ def main():
     # -------------------------------------------------------------
     if ACTION in ["cook", "full"]:
         if ACTION == "cook":
-            if os.path.exists(output_pak):
-                try:
-                    os.remove(output_pak)
-                except OSError:
-                    print(f"CRITICAL ERROR: Cannot overwrite '{output_pak}'. Close the game!")
-                    sys.exit(1)
+            # Wipe both possible paks before cooking
+            for p in [output_pak_clean, output_pak_err]:
+                if os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        print(f"CRITICAL ERROR: Cannot overwrite '{os.path.basename(p)}'. Close the game!")
+                        sys.exit(1)
+
 
         # FIX: Check and restore any stranded backup before backing up again
         from utils.builder.config_helper import restore_palbaker_backup
@@ -204,10 +211,14 @@ def main():
 
         try:
             print("Cooking Target Folders...", flush=True)
-            run_and_stream([UE_CMD_PATH, UPROJECT_PATH, "-run=cook", "-targetplatform=Windows", "-unversioned", "-NoUI", "-Map=/Engine/Maps/Entry"])
+            # Run cooker and capture warning/error flags from stdout
+            had_cook_issues = run_and_stream([UE_CMD_PATH, UPROJECT_PATH, "-run=cook", "-targetplatform=Windows", "-unversioned", "-NoUI", "-Map=/Engine/Maps/Entry"])
 
-            print("Preparing Pak (Filtering out Skeleton and Physics)...", flush=True)
+            # Dynamically map the target file name
+            final_pak_path = output_pak_err if had_cook_issues else output_pak_clean
+            print(f"Preparing Pak (Target: {os.path.basename(final_pak_path)})...", flush=True)
             response_file = os.path.join(output_dir, "response.txt")
+
             
             folders_to_pack = [
                 (cooked_dir, UE_VIRTUAL_PATH.replace("/Game/", "")),
@@ -226,17 +237,17 @@ def main():
                 print("  -> Custom Cartoon Cel Shader detected: Packing shader dependencies.", flush=True)
 
             print(f"Building final PAK...", flush=True)
-            files_found = pack_cooked_assets(UNREALPAK_PATH, response_file, output_pak, folders_to_pack, has_anims)
+            files_found = pack_cooked_assets(UNREALPAK_PATH, response_file, final_pak_path, folders_to_pack, has_anims)
             
             if files_found == 0:
                 print("ERROR: No files found to pack. Cook process might have failed.", flush=True)
                 sys.exit(1)
                 
-            print(f"SUCCESS! Pak created at: {output_pak} ({files_found} files)", flush=True)
+            print(f"SUCCESS! Pak created at: {final_pak_path} ({files_found} files)", flush=True)
 
         finally:
-            # Restore backup via clean move (removes the backup file from disk)
             if os.path.exists(ini_backup):
                 shutil.move(ini_backup, ini_path)
+
 if __name__ == "__main__":
     main()

@@ -1,14 +1,13 @@
-# components/mods_controller.py
+# controllers/mods_controller.py
 import asyncio
 import os
 import sys
-import flet as ft
 from utils import get_mod_info
-from components.mod_item import ModItem
+from components.mods.mod_card import ModItem  # Temporarily importing as ModItem to match your existing class name
 from utils.builder.pipeline_runner import run_pipeline_async
 from utils.builder.log_analyzer import LogAnalyzer
 from utils.plugins.decompiler import run_decompile_pipeline
-from components.mods_dialogs import (
+from components.mods.dialogs import (
     create_overwrite_warning_dialog,
     create_decompile_options_dialog,
     create_troubleshooting_advisor_dialog
@@ -53,7 +52,6 @@ class ModsController:
 
         if scan_disk:
             self.view.set_refresh_state(loading=True)
-            
             def worker():
                 self.raw_mods = get_mod_info(self.settings)
                 self.cached_items.clear()
@@ -69,7 +67,6 @@ class ModsController:
                     )
                 self.view.set_refresh_state(loading=False)
                 self.apply_filters()
-
             self.view.main_page.run_thread(worker)
         else:
             for item in self.cached_items:
@@ -91,17 +88,14 @@ class ModsController:
             
             search_lower = self.search_query.lower()
             name_match = (search_lower in mod["name"].lower()) or (search_lower in mod["localized_name"].lower())
-            if not name_match:
-                continue
+            if not name_match: continue
 
             if self.selected_badges:
                 mod_badges = {b[0] for b in mod["badges"]}
-                if not self.selected_badges.issubset(mod_badges):
-                    continue
+                if not self.selected_badges.issubset(mod_badges): continue
 
             if self.selected_statuses:
-                if mod["pak_status"] not in self.selected_statuses:
-                    continue
+                if mod["pak_status"] not in self.selected_statuses: continue
 
             filtered_items.append(item)
 
@@ -138,7 +132,7 @@ class ModsController:
 
     def handle_cancel(self):
         if self.active_token and self.active_token.get("process"):
-            self.view.write_log("\n[!] Force terminating the active pipeline...", ft.Colors.RED_400)
+            self.view.write_log("\n[!] Force terminating the active pipeline...", "error")
             try:
                 proc = self.active_token["process"]
                 if os.name == 'nt':
@@ -147,13 +141,13 @@ class ModsController:
                 else:
                     proc.kill()
             except Exception as e:
-                self.view.write_log(f"Error terminating process: {e}", ft.Colors.RED_400)
+                self.view.write_log(f"Error terminating process: {e}", "error")
 
     def execute_decompile_pipeline(self, mod_data, overwrite: bool = False):
         self.is_building = True
         self.active_mod_name = mod_data["name"]
         self.refresh_mods(scan_disk=False)
-        self.view.write_log(f"\n>>> EXECUTING DECOMPILER: {mod_data['name']}", ft.Colors.CYAN_400)
+        self.view.write_log(f"\n>>> EXECUTING DECOMPILER: {mod_data['name']}", "stage")
         
         async def decompile_task():
             fmodel_dir = mod_data["fmodel_path"]
@@ -173,23 +167,30 @@ class ModsController:
             
             analyzer = LogAnalyzer()
             for line in msg.splitlines():
-                analyzed_text, color, is_error = analyzer.analyze_line(line)
-                self.view.write_log(analyzed_text, color, flush=False)
+                analyzed_text, category, is_error = analyzer.analyze_line(line)
+                self.view.write_log(analyzed_text, category, flush=False)
                 
-            if success:
-                self.view.write_log(f"SUCCESS: {msg}", ft.Colors.GREEN_400)
+            summary = analyzer.generate_summary(success)
+            status = summary.get("status", "failed") if summary else "pure_success"
+            
+            if success and status == "pure_success":
+                self.view.write_log("SUCCESS: Decompile completed cleanly.", "success")
+            elif status == "success_with_warnings":
+                self.view.write_log("WARNING: Decompile completed with warnings.", "warning")
+            elif status == "success_with_errors":
+                self.view.write_log("ERROR: Decompile completed but found compiler or traceback errors.", "error")
             else:
-                self.view.write_log("FAILED: Compilation or Blender traceback detected.", ft.Colors.RED_400)
+                self.view.write_log("FAILED: Decompile failed. Check logs.", "error")
                 
             self.is_building = False
             self.active_mod_name = ""
             
-            summary = analyzer.generate_summary(success)
             if summary:
                 dlg = create_troubleshooting_advisor_dialog(summary, on_dismiss=lambda e: self.view.pop_dialog())
                 self.view.show_dialog(dlg)
                 
             self.refresh_mods(scan_disk=True)
+
             
         self.view.main_page.run_task(decompile_task)
 
@@ -198,14 +199,14 @@ class ModsController:
         self.view.set_log_autoscroll(True)
         self.active_mod_name = mod_data["name"]
         self.refresh_mods(scan_disk=False)
-        self.view.write_log(f"\n>>> EXECUTING [{action.upper()}]: {mod_data['name']}", ft.Colors.CYAN_400)
+        self.view.write_log(f"\n>>> EXECUTING [{action.upper()}]: {mod_data['name']}", "stage")
         
         self.active_token = {"process": None}
         
         async def run_task():
-            def log_callback(text, color, flush=True):
+            def log_callback(text, category, flush=True):
                 if text is not None:
-                    self.view.write_log(text, color, flush=False)
+                    self.view.write_log(text, category, flush=False)
                 if flush:
                     self.view.force_update()
                     
@@ -216,10 +217,18 @@ class ModsController:
                         break
                         
             def complete_callback(success, returncode, summary):
-                if success:
-                    self.view.write_log("SUCCESS: Operation completed.", ft.Colors.GREEN_400)
+                status = "pure_success"
+                if summary:
+                    status = summary.get("status", "failed")
+
+                if status == "pure_success" and success:
+                    self.view.write_log("SUCCESS: Operation completed cleanly.", "success")
+                elif status == "success_with_warnings":
+                    self.view.write_log(f"WARNING: Operation completed with {summary['total_warnings']} warnings.", "warning")
+                elif status == "success_with_errors":
+                    self.view.write_log(f"ERROR: Operation completed but found {summary['total_errors']} compilation errors.", "error")
                 else:
-                    self.view.write_log(f"Process terminated with exit code {returncode}", ft.Colors.RED_400)
+                    self.view.write_log(f"FAILED: Process terminated with exit code {returncode}", "error")
                 
                 self.is_building = False
                 self.view.set_log_autoscroll(False)
@@ -227,16 +236,20 @@ class ModsController:
                 
                 for item in self.cached_items:
                     if getattr(item, "mod_data")["name"] == self.active_mod_name:
-                        item.set_state(global_building=False, is_active_target=False, success=success)
+                        # Treat success_with_errors as a card-level failure
+                        card_success = success and (status != "success_with_errors")
+                        item.set_state(global_building=False, is_active_target=False, success=card_success)
                         break
                         
                 self.active_mod_name = ""
                 
+                # Auto-open diagnostic advisory card on any errors/warnings
                 if summary:
                     dlg = create_troubleshooting_advisor_dialog(summary, on_dismiss=lambda e: self.view.pop_dialog())
                     self.view.show_dialog(dlg)
                     
                 self.refresh_mods(scan_disk=True)
+
 
             script_args = [mod_data["name"], mod_data["category"], action]
             await run_pipeline_async(script_args, log_callback, progress_callback, complete_callback, self.active_token)
@@ -247,7 +260,7 @@ class ModsController:
         self.is_building = True
         self.active_mod_name = mod_data["name"]
         self.refresh_mods(scan_disk=False)
-        self.view.write_log(f"\n>>> FOCUSING UNREAL CONTENT BROWSER: {mod_data['name']}", ft.Colors.CYAN_400)
+        self.view.write_log(f"\n>>> FOCUSING UNREAL CONTENT BROWSER: {mod_data['name']}", "stage")
         
         async def browse_task():
             ue_virtual_path = f"/Game/Pal/Model/Character/{mod_data['category']}/{mod_data['name']}"
@@ -264,5 +277,13 @@ class ModsController:
             )
             
             if success:
-                self.view.write_log(f"SUCCESS: Focused Content Browser to: {ue_virtual_path}", ft.Colors.GREEN_400)
+                self.view.write_log(f"SUCCESS: Focused Content Browser to: {ue_virtual_path}", "success")
                 focus_unreal_window(target_project_name)
+            else:
+                self.view.write_log(f"FAILED to focus Unreal: {msg}", "error")
+                
+            self.is_building = False
+            self.active_mod_name = ""
+            self.refresh_mods(scan_disk=False)
+            
+        self.view.main_page.run_task(browse_task)

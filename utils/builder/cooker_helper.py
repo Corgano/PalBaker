@@ -2,8 +2,11 @@ import os
 import shutil
 import subprocess
 
-def run_and_stream(cmd_args):
-    """Executes a command and streams its output in absolute real-time to stdout."""
+def run_and_stream(cmd_args) -> bool:
+    """
+    Executes a command, streams output in real-time, and returns True 
+    if 'Warning:' or 'Error:' was printed in stdout, False otherwise.
+    """
     process = subprocess.Popen(
         cmd_args,
         stdout=subprocess.PIPE,
@@ -11,16 +14,28 @@ def run_and_stream(cmd_args):
         text=True,
         encoding='utf-8',
         errors='replace',
-        bufsize=1 # Line-buffered
+        bufsize=1  # Line-buffered
     )
+    
+    had_issues = False
     if process.stdout:
         for line in iter(process.stdout.readline, ''):
-            if not line: break
-            print(line.strip(), flush=True) 
+            if not line:
+                break
+            stripped = line.strip()
+            print(stripped, flush=True) 
+            
+            # Scan for issues
+            line_lower = stripped.lower()
+            if "error:" in line_lower or "warning:" in line_lower:
+                had_issues = True
             
     process.wait()
     if process.returncode != 0:
         raise subprocess.CalledProcessError(process.returncode, cmd_args)
+        
+    return had_issues
+
 
 def pack_cooked_assets(unrealpak_path: str, response_file: str, output_pak: str, folders_to_pack: list, has_anims: bool) -> int:
     """Creates the response file for UnrealPak and executes the packaging."""

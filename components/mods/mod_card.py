@@ -61,8 +61,18 @@ class ModItem: # Decoupled plain Python class to bypass Flet subclassing bugs
             size=16
         )
 
+         # Map semantic strings to visual Flet colors
+        status_colors = {
+            "Packed": ft.Colors.GREEN_400,
+            "Packed with Errors": ft.Colors.YELLOW_400,
+            "Outdated": ft.Colors.ORANGE_400,
+            "Unpacked": ft.Colors.RED_400
+        }
+        status_color = status_colors.get(mod_data["pak_status"], ft.Colors.RED_400)
+
+
         badge_controls = []
-        for text, color in mod_data["badges"]:
+        for text, color_hex in mod_data["badges"]:
             if text == "RAW":
                 tooltip_msg = "FModel files extracted, but no Blender (.blend) file has been created yet."
             elif text == "SOURCE":
@@ -79,10 +89,11 @@ class ModItem: # Decoupled plain Python class to bypass Flet subclassing bugs
             badge_controls.append(
                 ft.Container(
                     content=ft.Text(text, size=10, weight=ft.FontWeight.BOLD),
-                    bgcolor=color, 
+                    bgcolor=color_hex,  # Now safe as scanner returns pure Hex / agnostic format
                     padding=ft.Padding(left=6, right=6, top=2, bottom=2), 
                     border_radius=4,
                     tooltip=tooltip_msg
+
                 )
             )
 
@@ -110,11 +121,13 @@ class ModItem: # Decoupled plain Python class to bypass Flet subclassing bugs
             self.name_text,
             ft.Row(badge_controls, spacing=5),
             ft.Container(expand=True),
-            ft.Text(mod_data["pak_status"], color=mod_data["pak_color"], size=12, width=60, text_align=ft.TextAlign.RIGHT),
+            # Bind the mapped color
+            ft.Text(mod_data["pak_status"], color=status_color, size=12, width=120, text_align=ft.TextAlign.RIGHT),
             self.primary_button,
             overflow_menu
         ]
         self.main_row = ft.Row(controls=row_controls)
+
 
         # --- Progress Bar UI ---
         self.progress_bar = ft.ProgressBar(value=0.0, color=ft.Colors.CYAN_400, bgcolor=ft.Colors.WHITE10)
