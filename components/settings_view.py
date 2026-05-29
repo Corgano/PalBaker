@@ -103,6 +103,11 @@ class SettingsView:
         })
         save_settings(self.settings)
 
+        # FIX: Ensure any stranded backups are restored immediately on the saved target path
+        from utils.builder.config_helper import restore_palbaker_backup
+        restore_palbaker_backup(self.settings["uproject"])
+
+
         # Run verification asynchronously so it doesn't freeze the Flet UI
         def verify_and_build():
             # Synchronous dialog helper using events

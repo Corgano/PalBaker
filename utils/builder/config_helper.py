@@ -1,7 +1,37 @@
 # utils/builder/config_helper.py
 
 import os
+# utils/builder/config_helper.py (Add to the end of the file)
 
+import shutil
+
+def restore_palbaker_backup(uproject_path: str) -> bool:
+    """
+    Checks if a stranded DefaultGame.ini.palbaker.bak exists in the project Config directory.
+    If found, restores it to DefaultGame.ini and removes the backup file.
+    Returns True if restoration was performed, False otherwise.
+    """
+    if not uproject_path or not os.path.exists(uproject_path):
+        return False
+        
+    project_dir = os.path.dirname(uproject_path)
+    ini_dir = os.path.join(project_dir, "Config")
+    ini_path = os.path.join(ini_dir, "DefaultGame.ini")
+    ini_backup = os.path.join(ini_dir, "DefaultGame.ini.palbaker.bak")
+    
+    if os.path.exists(ini_backup):
+        print(f"\n[Self-Healing] Stranded PalBaker backup detected! Restoring {ini_backup} -> {ini_path}...", flush=True)
+        try:
+            # Safely restore original settings
+            shutil.copy2(ini_backup, ini_path)
+            # Remove the backup to prevent loop triggers
+            os.remove(ini_backup)
+            print("[Self-Healing] Project DefaultGame.ini successfully restored and healed.", flush=True)
+            return True
+        except Exception as e:
+            print(f"[Self-Healing] ERROR: Failed to restore backup: {e}", flush=True)
+            
+    return False
 def inject_packaging_settings(ini_path: str, ue_virtual_path: str, skeleton_virtual_path: str, anims_virtual_path: str, has_anims: bool, extra_paths: list = None):
     """Safely updates DefaultGame.ini packaging settings without modifying existing user entries."""
     if not os.path.exists(ini_path):

@@ -50,7 +50,9 @@ def main():
     config_dir = os.path.join(project_dir, "Config")
     os.makedirs(config_dir, exist_ok=True)
     ini_path = os.path.join(config_dir, "DefaultGame.ini")
-    ini_backup = os.path.join(config_dir, "DefaultGame.ini.bak")
+    
+    # FIX: Use unique PalBaker backup extension
+    ini_backup = os.path.join(config_dir, "DefaultGame.ini.palbaker.bak")
 
     # Detect animations in project
     anims_source_dir = os.path.join(project_dir, "Content", "Pal", "Animation", "Character", "Monster", MONSTER_NAME)
@@ -165,6 +167,10 @@ def main():
                     print(f"CRITICAL ERROR: Cannot overwrite '{output_pak}'. Close the game!")
                     sys.exit(1)
 
+        # FIX: Check and restore any stranded backup before backing up again
+        from utils.builder.config_helper import restore_palbaker_backup
+        restore_palbaker_backup(UPROJECT_PATH)
+
         rel_ue_path = UE_VIRTUAL_PATH.replace("/Game/", "").replace("/", os.sep)
         cooked_dir = os.path.join(project_dir, "Saved", "Cooked", "Windows", target_project_name, "Content", rel_ue_path)
         
@@ -177,6 +183,8 @@ def main():
         if os.path.exists(cooked_dir): shutil.rmtree(cooked_dir, ignore_errors=True)
         if os.path.exists(cooked_skel_dir): shutil.rmtree(cooked_skel_dir, ignore_errors=True)
         if os.path.exists(cooked_anims_dir): shutil.rmtree(cooked_anims_dir, ignore_errors=True)
+
+        # Check for custom cartoon cel shader dependency inside Content directory
         custom_shader_raw = os.path.join(project_dir, "Content", "CartoonCelShader", "Materials", "CelShader")
         has_custom_shader = os.path.exists(custom_shader_raw)
         extra_cook_paths = []
@@ -191,8 +199,7 @@ def main():
                 SKELETON_VIRTUAL_PATH, 
                 ANIMS_VIRTUAL_PATH, 
                 has_anims,
-                extra_paths=extra_cook_paths  # Pass detected shader dependencies
-
+                extra_paths=extra_cook_paths
             )
 
         try:
@@ -213,7 +220,6 @@ def main():
             else:
                 print("  -> No custom animations: Shipping BP assets, but stripping Skeleton asset to prevent ragdoll glitches.", flush=True)
 
-            # Check and append the cooked CelShader folder to the final package queue
             if has_custom_shader:
                 custom_shader_cooked = os.path.join(project_dir, "Saved", "Cooked", "Windows", target_project_name, "Content", "CartoonCelShader", "Materials", "CelShader")
                 folders_to_pack.append((custom_shader_cooked, "CartoonCelShader/Materials/CelShader"))
@@ -221,7 +227,7 @@ def main():
 
             print(f"Building final PAK...", flush=True)
             files_found = pack_cooked_assets(UNREALPAK_PATH, response_file, output_pak, folders_to_pack, has_anims)
-
+            
             if files_found == 0:
                 print("ERROR: No files found to pack. Cook process might have failed.", flush=True)
                 sys.exit(1)
@@ -229,8 +235,8 @@ def main():
             print(f"SUCCESS! Pak created at: {output_pak} ({files_found} files)", flush=True)
 
         finally:
+            # Restore backup via clean move (removes the backup file from disk)
             if os.path.exists(ini_backup):
                 shutil.move(ini_backup, ini_path)
-
 if __name__ == "__main__":
     main()

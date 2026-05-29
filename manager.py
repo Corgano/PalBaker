@@ -1,7 +1,10 @@
+# manager.py (Add helper call to main startup)
+
 import flet as ft
 from utils.config import load_settings
 from components.settings_view import SettingsView
 from components.mods_view import ModsView
+from utils.builder.config_helper import restore_palbaker_backup  # Import helper
 
 def main(page: ft.Page):
     page.title = "Palworld Baker Mod Manager"
@@ -12,6 +15,9 @@ def main(page: ft.Page):
 
     # Load state
     settings = load_settings()
+
+    # FIX: Automatically restore any stranded backups immediately on UI launch
+    restore_palbaker_backup(settings.get("uproject"))
 
     # Mount decoupled UI controllers
     mods_view = ModsView(page, settings)
