@@ -1,5 +1,7 @@
 # views/mods_view.py
 import flet as ft
+import os
+
 from controllers.mods_controller import ModsController
 from components.mods.mod_card import ModItem
 from components.mods.dialogs import (
@@ -17,12 +19,14 @@ class ModsView:
 
         self.mods_list = ft.ListView(expand=True, spacing=10)
         self.log_view = ft.ListView(expand=True, spacing=2, auto_scroll=True)
-        self.cached_components = {}  # Store UI components by mod name
+        self.cached_components = {}
 
-        # File Picker for Icons
+        # FIXED: Add FilePickers to page.services, NOT page.overlay
         self.icon_picker = ft.FilePicker()
         self.main_page.services.append(self.icon_picker)
         
+        self.audio_picker = ft.FilePicker()
+        self.main_page.services.append(self.audio_picker)
 
         self.active_icon_mod_data = None
         self.search_bar = ft.TextField(
@@ -53,6 +57,7 @@ class ModsView:
             tooltip="Rescan disk for mods",
             on_click=lambda e: self.controller.refresh_mods(scan_disk=True)
         )
+        self.refresh_button.disabled = False
         self.refresh_spinner = ft.ProgressRing(width=16, height=16, stroke_width=2, visible=False)
 
         self.console_container = ft.Container(
@@ -75,49 +80,53 @@ class ModsView:
             ]
         )
 
-    # --- Task Runners ---
     def run_in_thread(self, func):
         self.main_page.run_thread(func)
 
-    def run_async_task(self, func):
-        self.main_page.run_task(func)
+    def run_async_task(self, func, *args):
+        self.main_page.run_task(func, *args)
 
-    # --- Render Methods ---
-    def render_mods(self, mods_data: list[dict], global_building: bool, active_mod_name: str):
-        """Takes pure data from the Controller, instantiates the UI ModItems, and displays them."""
-        self.mods_list.controls.clear()
+    def clear_ui_cache(self):
         self.cached_components.clear()
+
+    def render_mods(self, mods_data: list[dict], global_building: bool, active_mod_name: str):
+        self.mods_list.controls.clear()
         
         for mod_data in mods_data:
-            item = ModItem(
-                mod_data=mod_data,
-                on_action_click=self.controller.handle_action,
-                on_cancel_click=self.controller.handle_cancel,
-                on_pick_icon=self.trigger_icon_picker,
-                is_building=global_building,
-                show_mapped=self.controller.show_mapped
-            )
-            item.set_state(global_building, is_active_target=(mod_data["name"] == active_mod_name))
-            self.cached_components[mod_data["name"]] = item
+            name = mod_data["name"]
+            if name in self.cached_components:
+                item = self.cached_components[name]
+                item.mod_data = mod_data
+                item.set_show_mapped(self.controller.show_mapped)
+                item.set_state(global_building, is_active_target=(name == active_mod_name))
+            else:
+                item = ModItem(
+                    mod_data=mod_data,
+                    on_action_click=self.controller.handle_action,
+                    on_cancel_click=self.controller.handle_cancel,
+                    on_pick_icon=self.trigger_icon_picker,
+                    on_pick_audio=self.trigger_audio_picker,
+                    on_play_audio=self.controller.play_audio,
+                    on_clear_audio=self.controller.clear_audio,
+                    is_building=global_building,
+                    show_mapped=self.controller.show_mapped
+                )
+                item.set_state(global_building, is_active_target=(name == active_mod_name))
+                self.cached_components[name] = item
+                
             self.mods_list.controls.append(item.view)
-            
         self.force_update()
 
-    # --- Icon Picker Logic ---
     async def trigger_icon_picker(self, mod_data):
-        """Asynchronously triggers the file picker and applies the selected icon on success."""
         result = await self.icon_picker.pick_files(allow_multiple=False, allowed_extensions=["png", "jpg", "jpeg"])
-        # FIX: result is a raw list in Flet 0.84.0+
         if result and len(result) > 0:
             self.controller.apply_custom_icon(mod_data, result[0].path)
 
-    def _on_icon_picked(self, e):
-        """Event handler for icon file picker results, safe across all Flet versions."""
-        if e.files and len(e.files) > 0 and self.active_icon_mod_data:
-            self.controller.apply_custom_icon(self.active_icon_mod_data, e.files[0].path)
-        self.active_icon_mod_data = None
+    async def trigger_audio_picker(self, mod_data, cry_name):
+        result = await self.audio_picker.pick_files(allow_multiple=False, allowed_extensions=["wav", "mp3", "ogg"])
+        if result and len(result) > 0 and result[0].path:
+            await self.controller.apply_custom_audio(mod_data, cry_name, result[0].path)
 
-    # --- ModCard Visual Setters ---
     def update_card_progress(self, mod_name: str, line: str, flush: bool):
         if mod_name in self.cached_components:
             self.cached_components[mod_name].update_progress(line, flush)
@@ -126,7 +135,6 @@ class ModsView:
         if mod_name in self.cached_components:
             self.cached_components[mod_name].set_state(global_building=False, is_active_target=False, success=success)
 
-    # --- Dialog Factories ---
     def prompt_overwrite_warning(self, mod_data, confirm_callback):
         dlg = create_overwrite_warning_dialog(mod_data.get("ue_modified_files", []), lambda e: (self.pop_dialog(), confirm_callback()), lambda e: self.pop_dialog())
         self.show_dialog(dlg)
@@ -143,7 +151,6 @@ class ModsView:
         dlg = create_troubleshooting_advisor_dialog(summary, lambda e: self.pop_dialog())
         self.show_dialog(dlg)
 
-    # --- Core UI Updaters ---
     def set_refresh_state(self, loading: bool):
         self.refresh_button.disabled = loading
         self.refresh_spinner.visible = loading

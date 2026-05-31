@@ -1,16 +1,17 @@
+# build_mod.py
 import os
 import sys
 import glob
 import json
 import shutil
+import subprocess
 from utils.builder.config_helper import inject_packaging_settings
 from utils.builder.blender_helper import run_headless_blender
 from utils.builder.unreal_helper import run_remote_import
 from utils.builder.cooker_helper import run_and_stream, pack_cooked_assets
-from utils.state import save_push_state  # ADDED: Fix save_push_state NameError
+from utils.state import save_push_state
 
 # Force standard output stream to use UTF-8. 
-# This completely prevents "UnicodeEncodeError: 'charmap' codec can't encode characters" crashes in Windows terminals.
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding='utf-8')
 
@@ -143,13 +144,12 @@ def main():
             "textures": pngs,
             "fbx_file": fbx_file if os.path.exists(fbx_file) else None,
             "mi_jsons": jsons,
-            "icon_file": ICON_FMODEL_PATH if HAS_ICON else None  # Pass icon specifically
+            "icon_file": ICON_FMODEL_PATH if HAS_ICON else None
         }
         config_path = os.path.join(FMODEL_DIR, "import_config.json")
         with open(config_path, "w") as f:
             json.dump(config, f)
 
-        # FIXED: Call the modularized remote execution import library
         print("Connecting to Open Unreal Engine...", flush=True)
         ue_import_script = os.path.join(os.path.dirname(__file__), "ue_import.py")
         success, log_msg = run_remote_import(UE_ROOT, target_project_name, FMODEL_DIR, ue_import_script)
@@ -169,7 +169,6 @@ def main():
     # -------------------------------------------------------------
     if ACTION in ["cook", "full"]:
         if ACTION == "cook":
-            # Wipe both possible paks before cooking
             for p in [output_pak_clean, output_pak_err]:
                 if os.path.exists(p):
                     try:
@@ -196,7 +195,6 @@ def main():
         if os.path.exists(cooked_skel_dir): shutil.rmtree(cooked_skel_dir, ignore_errors=True)
         if os.path.exists(cooked_anims_dir): shutil.rmtree(cooked_anims_dir, ignore_errors=True)
 
-        # Check for custom cartoon cel shader dependency inside Content directory
         custom_shader_raw = os.path.join(project_dir, "Content", "CartoonCelShader", "Materials", "CelShader")
         has_custom_shader = os.path.exists(custom_shader_raw)
         extra_cook_paths = []
@@ -220,10 +218,8 @@ def main():
 
         try:
             print("Cooking Target Folders...", flush=True)
-            # Run cooker and capture warning/error flags from stdout
             had_cook_issues = run_and_stream([UE_CMD_PATH, UPROJECT_PATH, "-run=cook", "-targetplatform=Windows", "-unversioned", "-NoUI", "-Map=/Engine/Maps/Entry"])
 
-            # Dynamically map the target file name
             final_pak_path = output_pak_err if had_cook_issues else output_pak_clean
             print(f"Preparing Pak (Target: {os.path.basename(final_pak_path)})...", flush=True)
             response_file = os.path.join(output_dir, "response.txt")
@@ -246,20 +242,32 @@ def main():
                 print("  -> Custom Cartoon Cel Shader detected: Packing shader dependencies.", flush=True)
 
             if HAS_ICON:
-                # Find all cooked parts of the specific icon file (uasset, uexp, etc.)
                 icon_cooked_base = os.path.join(project_dir, "Saved", "Cooked", "Windows", target_project_name, "Content", "Pal", "Texture", "PalIcon", "Normal", f"T_{MONSTER_NAME}_icon_normal")
                 
                 icon_parts_found = False
                 for ext in [".uasset", ".uexp", ".ubulk"]:
                     cooked_file = icon_cooked_base + ext
                     if os.path.exists(cooked_file):
-                        # Construct its precise virtual destination path
                         virtual_file = f"Pal/Texture/PalIcon/Normal/T_{MONSTER_NAME}_icon_normal{ext}"
                         folders_to_pack.append((cooked_file, virtual_file))
                         icon_parts_found = True
                 
                 if icon_parts_found:
                     print(f"  -> Custom Icon detected: Packing only {MONSTER_NAME} icon files.", flush=True)
+
+            # --- PRE-COMPILED WWISE AUDIO PIPELINE ---
+            audio_media_dir = os.path.join(FMODEL_DIR, ".palbaker_audio", "WwiseAudio", "Media")
+            if os.path.exists(audio_media_dir):
+                found_audio = False
+                for wem_file in os.listdir(audio_media_dir):
+                    if wem_file.endswith(".wem"):
+                        abs_wem = os.path.join(audio_media_dir, wem_file)
+                        virtual_wem = f"WwiseAudio/Media/{wem_file}"
+                        folders_to_pack.append((abs_wem, virtual_wem))
+                        print(f"  -> Packed custom audio override: {wem_file}", flush=True)
+                        found_audio = True
+                if found_audio:
+                    print("SUCCESS: Packed pre-compiled WEM overrides directly into archive.", flush=True)
 
 
             print(f"Building final PAK...", flush=True)

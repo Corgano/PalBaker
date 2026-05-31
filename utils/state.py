@@ -1,3 +1,4 @@
+# utils/state.py
 import os
 import json
 import glob
@@ -21,7 +22,11 @@ def get_max_source_mtime(directory):
     max_time = 0.0
     source_extensions = ('.blend', '.fbx', '.png', '.json')
     
-    for root, _, files in os.walk(directory):
+    for root, dirs, files in os.walk(directory):
+        # In-place modify dirs to prune/ignore hidden directories (starting with .)
+        # This keeps .palbaker_audio from being scanned as a mesh/texture modifier.
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
+        
         for file in files:
             if file.endswith(source_extensions) and not file.startswith('.'):
                 # Ignore config and state files

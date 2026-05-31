@@ -41,11 +41,14 @@ def safe_update(control):
         pass
 
 class ModItem:
-    def __init__(self, mod_data: dict, on_action_click, on_cancel_click, on_pick_icon, is_building: bool, show_mapped: bool):
+    def __init__(self, mod_data: dict, on_action_click, on_cancel_click, on_pick_icon, on_pick_audio, on_play_audio, on_clear_audio, is_building: bool, show_mapped: bool):
         self.mod_data = mod_data
         self.on_action_click = on_action_click
         self.on_cancel_click = on_cancel_click
         self.on_pick_icon = on_pick_icon
+        self.on_pick_audio = on_pick_audio
+        self.on_play_audio = on_play_audio
+        self.on_clear_audio = on_clear_audio
         self.is_building = is_building
         self.show_mapped = show_mapped
 
@@ -145,8 +148,14 @@ class ModItem:
             spacing=5
         )
 
-        # Initialize Dropdown Details
-        self.details = ModDetails(mod_data, self.on_pick_icon)
+        # Initialize Dropdown Details with forward mappings
+        self.details = ModDetails(
+            mod_data=mod_data, 
+            on_pick_icon=self.on_pick_icon,
+            on_pick_audio=self.on_pick_audio,
+            on_play_audio=self.on_play_audio,
+            on_clear_audio=self.on_clear_audio
+        )
         self.details_container = ft.Container(content=self.details.view, visible=False)
 
         self.container = ft.Container(

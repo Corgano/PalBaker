@@ -8,43 +8,48 @@ class SettingsView:
         self.main_page = page
         self.settings = settings
         
+        # FIXED: Initialize shared pickers once to prevent dynamic TimeoutExceptions
+        self.dir_picker = ft.FilePicker()
+        self.file_picker = ft.FilePicker()
+        self.main_page.services.append(self.dir_picker)
+        self.main_page.services.append(self.file_picker)
+
         # Link the Controller
         self.controller = SettingsController(self, settings, on_save_callback)
 
-        # Presentation Layout Controls using Reusable Components
         self.fmodel_picker = PathPicker(
             label="FModel Output Folder", 
             value=str(settings.get("fmodel_output", "")), 
             icon=ft.Icons.FOLDER_OPEN,
-            on_browse_click=lambda e: self.main_page.run_task(self.controller.pick_directory, self.fmodel_picker)
+            on_browse_click=lambda e: self.main_page.run_task(self.controller.pick_directory, self.fmodel_picker, self.dir_picker)
         )
         
         self.ue_root_picker = PathPicker(
             label="Unreal Engine Root (e.g. UE_5.1)", 
             value=str(settings.get("ue_root", "")), 
             icon=ft.Icons.FOLDER_OPEN,
-            on_browse_click=lambda e: self.main_page.run_task(self.controller.pick_directory, self.ue_root_picker)
+            on_browse_click=lambda e: self.main_page.run_task(self.controller.pick_directory, self.ue_root_picker, self.dir_picker)
         )
         
         self.uproject_picker = PathPicker(
             label="Palworld ModKit .uproject Path", 
             value=str(settings.get("uproject", "")), 
             icon=ft.Icons.FILE_OPEN,
-            on_browse_click=lambda e: self.main_page.run_task(self.controller.pick_file, self.uproject_picker, ["uproject"])
+            on_browse_click=lambda e: self.main_page.run_task(self.controller.pick_file, self.uproject_picker, self.file_picker, ["uproject"])
         )
         
         self.blender_picker = PathPicker(
             label="Blender Executable Path", 
             value=str(settings.get("blender", "")), 
             icon=ft.Icons.FILE_OPEN,
-            on_browse_click=lambda e: self.main_page.run_task(self.controller.pick_file, self.blender_picker)
+            on_browse_click=lambda e: self.main_page.run_task(self.controller.pick_file, self.blender_picker, self.file_picker)
         )
         
         self.palworld_exe_picker = PathPicker(
             label="Palworld.exe Path", 
             value=str(settings.get("palworld_exe", "")), 
             icon=ft.Icons.FILE_OPEN,
-            on_browse_click=lambda e: self.main_page.run_task(self.controller.pick_file, self.palworld_exe_picker, ["exe"])
+            on_browse_click=lambda e: self.main_page.run_task(self.controller.pick_file, self.palworld_exe_picker, self.file_picker, ["exe"])
         )
 
         self.show_mapped_switch = ft.Switch(

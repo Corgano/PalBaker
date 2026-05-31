@@ -2,6 +2,7 @@
 import os
 from .state import is_ue_modified, is_source_modified
 from .names import get_localized_name
+from .audio_helper import get_pal_sound_metadata
 
 def get_mod_info(settings: dict):
     fmodel_base = settings.get("fmodel_output", "")
@@ -50,9 +51,28 @@ def get_mod_info(settings: dict):
         data["icon_path"] = icon_path
         data["has_icon"] = has_icon
 
+        # --- AUDIO STATE DETECTION ---
+        sound_meta = get_pal_sound_metadata(name)
+        audio_overrides = {}
+        
+        if has_fmodel:
+            audio_dir = os.path.join(fmodel_path, ".palbaker_audio", "sources")
+            
+            for cry_name in ["Normal", "Joy", "Anger", "Sorrow", "Pain", "Death"]:
+                if cry_name in sound_meta:
+                    audio_overrides[cry_name] = None
+                    # Verify if any supported format is staged
+                    for ext in [".wav", ".mp3", ".ogg"]:
+                        test_path = os.path.join(audio_dir, f"{cry_name}{ext}")
+                        if os.path.exists(test_path):
+                            audio_overrides[cry_name] = test_path
+                            break
+                        
+        data["audio_overrides"] = audio_overrides
+        data["sound_metadata"] = sound_meta
 
         if has_fmodel and not has_blend:
-            badges.append(("RAW", "#333333"))  # Return hex or simple representations
+            badges.append(("RAW", "#333333"))
         if has_blend:
             badges.append(("SOURCE", "#2196F3"))
         if has_ue:
@@ -85,7 +105,10 @@ def get_mod_info(settings: dict):
             outdated = False
             
             if has_fmodel:
-                for root, _, files in os.walk(fmodel_path):
+                for root, dirs, files in os.walk(fmodel_path):
+                    # Prune dot directories to prevent custom sounds from falsely flagging the PAK as outdated
+                    dirs[:] = [d for d in dirs if not d.startswith('.')]
+                    
                     for f in files:
                         if f.endswith(('.blend', '.fbx', '.png', '.json')) and os.path.getmtime(os.path.join(root, f)) > pak_mtime:
                             outdated = True
