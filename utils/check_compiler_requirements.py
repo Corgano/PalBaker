@@ -1,3 +1,4 @@
+# utils/check_compiler_requirements.py
 import os
 import sys
 import re
@@ -126,22 +127,26 @@ def verify_compiler_requirements(all_yes: bool = False, print_output: bool = Tru
         fix_reason = "BuildConfiguration.xml is missing the <Compiler> element."
     elif xml_data.get("compiler") != "VisualStudio2022":
         needs_fix = True
-        # FIXED: Detect and warn about the Visual2022 spelling typo
         fix_reason = f"Configured compiler value is invalid (got '{xml_data['compiler']}', expected 'VisualStudio2022')."
     elif not xml_data.get("version"):
         needs_fix = True
         fix_reason = "BuildConfiguration.xml is missing a <CompilerVersion> target."
     else:
-        configured_version = xml_data["version"]
-        is_config_compliant = configured_version.startswith("14.3")
-        is_config_installed = any(comp["version"] == configured_version for comp in compliant_installed)
-        
-        if not is_config_compliant:
+        # FIXED: Extract and narrow type to a strict string to satisfy Pylance
+        configured_version = xml_data.get("version")
+        if isinstance(configured_version, str):
+            is_config_compliant = configured_version.startswith("14.3")
+            is_config_installed = any(comp["version"] == configured_version for comp in compliant_installed)
+            
+            if not is_config_compliant:
+                needs_fix = True
+                fix_reason = f"Configured version ({configured_version}) is not a compliant 14.3x compiler."
+            elif not is_config_installed:
+                needs_fix = True
+                fix_reason = f"Configured version ({configured_version}) is not physically installed."
+        else:
             needs_fix = True
-            fix_reason = f"Configured version ({configured_version}) is not a compliant 14.3x compiler."
-        elif not is_config_installed:
-            needs_fix = True
-            fix_reason = f"Configured version ({configured_version}) is not physically installed."
+            fix_reason = "BuildConfiguration.xml is missing a valid <CompilerVersion> value."
 
     if needs_fix:
         if print_output:
@@ -176,7 +181,9 @@ def verify_compiler_requirements(all_yes: bool = False, print_output: bool = Tru
             msg = "User declined to auto-fix the compiler configuration."
             return False, msg
 
-    msg = f"Compiler requirements are satisfied. Using MSVC {xml_data['version']}."
+    # FIXED: Safe dictionary lookups to satisfy Pylance's non-subscriptable object rules
+    configured_ver_str = xml_data.get("version") if xml_data is not None else "Unknown"
+    msg = f"Compiler requirements are satisfied. Using MSVC {configured_ver_str}."
     if print_output:
         print(f"  ✅ SUCCESS: {msg}")
     return True, msg

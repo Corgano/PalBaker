@@ -1,3 +1,4 @@
+# unreal_scripts/rigging.py
 import unreal
 import os
 
@@ -12,14 +13,20 @@ def apply_rigging(working_dir, ue_path, folder_name, target_asset_path):
     asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
     
     skeleton_dir = f"/Game/Pal/Model/Character/Skeleton/{folder_name}"
-    skeleton_assets = ar.get_assets_by_path(skeleton_dir, recursive=True)
-    anim_bps = [a for a in skeleton_assets if str(a.asset_class_path.asset_name) == "AnimBlueprint"]
+    
+    # FIXED: Wrapped string path in unreal.Name() and added non-None check to satisfy Pylance
+    skeleton_assets = ar.get_assets_by_path(unreal.Name(skeleton_dir), recursive=True)
+    anim_bps = []
+    if skeleton_assets is not None:
+        anim_bps = [a for a in skeleton_assets if str(a.asset_class_path.asset_name) == "AnimBlueprint"]
     
     if anim_bps:
         anim_bp = unreal.EditorAssetLibrary.load_asset(anim_bps[0].package_name)
     else:
-        monster_assets = ar.get_assets_by_path(ue_path, recursive=True)
-        anim_bps = [a for a in monster_assets if str(a.asset_class_path.asset_name) == "AnimBlueprint"]
+        # FIXED: Wrapped string path in unreal.Name() and added non-None check to satisfy Pylance
+        monster_assets = ar.get_assets_by_path(unreal.Name(ue_path), recursive=True)
+        if monster_assets is not None:
+            anim_bps = [a for a in monster_assets if str(a.asset_class_path.asset_name) == "AnimBlueprint"]
         if anim_bps:
             anim_bp = unreal.EditorAssetLibrary.load_asset(anim_bps[0].package_name)
             

@@ -118,14 +118,24 @@ class ModsView:
         self.force_update()
 
     async def trigger_icon_picker(self, mod_data):
+        """Asynchronously triggers the file picker and applies the selected icon on success."""
         result = await self.icon_picker.pick_files(allow_multiple=False, allowed_extensions=["png", "jpg", "jpeg"])
         if result and len(result) > 0:
-            self.controller.apply_custom_icon(mod_data, result[0].path)
+            path = result[0].path
+            # Explicit type guard narrows 'str | None' to 'str' for Pylance
+            if isinstance(path, str):
+                self.controller.apply_custom_icon(mod_data, path)
+
 
     async def trigger_audio_picker(self, mod_data, cry_name):
+        """Asynchronously triggers the file picker for custom cries (Supports WAV, MP3, and OGG)."""
         result = await self.audio_picker.pick_files(allow_multiple=False, allowed_extensions=["wav", "mp3", "ogg"])
-        if result and len(result) > 0 and result[0].path:
-            await self.controller.apply_custom_audio(mod_data, cry_name, result[0].path)
+        if result and len(result) > 0:
+            path = result[0].path
+            # Explicit type guard narrows 'str | None' to 'str' for Pylance
+            if isinstance(path, str):
+                await self.controller.apply_custom_audio(mod_data, cry_name, path)
+
 
     def update_card_progress(self, mod_name: str, line: str, flush: bool):
         if mod_name in self.cached_components:

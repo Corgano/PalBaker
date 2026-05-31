@@ -121,11 +121,17 @@ def create_texture_node(nodes, working_dir, texture_name, loc_x, loc_y, non_colo
             img = bpy.data.images.get(f"{texture_name}.png")
             if not img:
                 img = bpy.data.images.load(img_path)
-            if non_color:
-                img.colorspace_settings.name = 'Non-Color'
+            
+            # FIXED: Added explicit non-None guards for Pylance type-narrowing
+            if img is not None and img.colorspace_settings is not None:
+                if non_color:
+                    # FIXED: Used setattr to dynamically assign the string and bypass strict Enum typing
+                    setattr(img.colorspace_settings, 'name', 'Non-Color')
+                    
             tex_node.image = img
             
     return tex_node
+
 
 def build_eye_template(mat, params, working_dir):
     """Builds the simplified transparent eye/mouth PBR template."""

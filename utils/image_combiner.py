@@ -47,7 +47,7 @@ def build_mrao_texture(combine_node, out_filepath):
     elif img.size[0] != width or img.size[1] != height:
         img.scale(width, height)
         
-    img.pixels.foreach_set(pixels_list)
+    img.pixels.foreach_set(pixels_list) # type: ignore
     
     # Set save settings
     img.filepath_raw = out_filepath
@@ -75,7 +75,7 @@ def _get_socket_data(socket, target_w, target_h):
                     
                     # Force buffer load
                     try:
-                        _ = temp_img.pixels[0]
+                        _ = temp_img.pixels[0]# type: ignore
                     except Exception:
                         pass
                         
@@ -83,7 +83,7 @@ def _get_socket_data(socket, target_w, target_h):
                         temp_img.scale(target_w, target_h)
                         
                     arr = np.empty(target_w * target_h * 4, dtype=np.float32)
-                    temp_img.pixels.foreach_get(arr)
+                    temp_img.pixels.foreach_get(arr)# type: ignore
                     
                     bpy.data.images.remove(temp_img)
                     

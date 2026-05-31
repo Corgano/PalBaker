@@ -1,6 +1,9 @@
+# utils/builder/cooker_helper.py
 import os
+import sys
 import shutil
 import subprocess
+from utils.audio_helper import get_staged_audio_overrides
 
 def run_and_stream(cmd_args) -> bool:
     """
@@ -35,6 +38,63 @@ def run_and_stream(cmd_args) -> bool:
         raise subprocess.CalledProcessError(process.returncode, cmd_args)
         
     return had_issues
+
+
+def clean_cook_environment(workspace):
+    """Wipes existing cooked folders and target PAK files to prepare for a clean compile run."""
+    for p in [workspace.output_pak_clean, workspace.output_pak_err]:
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+                print(f"Cleaned old target pak: {os.path.basename(p)}", flush=True)
+            except OSError:
+                print(f"CRITICAL ERROR: Cannot overwrite '{os.path.basename(p)}'. Close the game!", flush=True)
+                sys.exit(1)
+
+    # Clean cooked folders
+    if os.path.exists(workspace.cooked_dir): shutil.rmtree(workspace.cooked_dir, ignore_errors=True)
+    if os.path.exists(workspace.cooked_skel_dir): shutil.rmtree(workspace.cooked_skel_dir, ignore_errors=True)
+    if os.path.exists(workspace.cooked_anims_dir): shutil.rmtree(workspace.cooked_anims_dir, ignore_errors=True)
+
+
+def resolve_packaging_manifest(workspace, has_anims: bool) -> list[tuple[str, str]]:
+    """Compiles the absolute file sources and virtual destination paths to pass to UnrealPak."""
+    folders_to_pack = [
+        (workspace.cooked_dir, workspace.ue_virtual_path.replace("/Game/", "")),
+        (workspace.cooked_skel_dir, workspace.skeleton_virtual_path.replace("/Game/", ""))
+    ]
+
+    if has_anims:
+        folders_to_pack.append((workspace.cooked_anims_dir, workspace.anims_virtual_path.replace("/Game/", "")))
+        print("  -> Custom animations detected: Shipping complete Skeleton, Animation, and BP assets.", flush=True)
+    else:
+        print("  -> No custom animations: Shipping BP assets, but stripping Skeleton asset to prevent ragdoll glitches.", flush=True)
+
+    if workspace.has_custom_shader:
+        custom_shader_cooked = os.path.join(workspace.project_dir, "Saved", "Cooked", "Windows", workspace.target_project_name, "Content", "CartoonCelShader", "Materials", "CelShader")
+        folders_to_pack.append((custom_shader_cooked, "CartoonCelShader/Materials/CelShader"))
+        print("  -> Custom Cartoon Cel Shader detected: Packing shader dependencies.", flush=True)
+
+    if workspace.has_icon:
+        icon_cooked_base = os.path.join(workspace.project_dir, "Saved", "Cooked", "Windows", workspace.target_project_name, "Content", "Pal", "Texture", "PalIcon", "Normal", f"T_{workspace.monster_name}_icon_normal")
+        icon_parts_found = False
+        for ext in [".uasset", ".uexp", ".ubulk"]:
+            cooked_file = icon_cooked_base + ext
+            if os.path.exists(cooked_file):
+                virtual_file = f"Pal/Texture/PalIcon/Normal/T_{workspace.monster_name}_icon_normal{ext}"
+                folders_to_pack.append((cooked_file, virtual_file))
+                icon_parts_found = True
+        if icon_parts_found:
+            print(f"  -> Custom Icon detected: Packing only {workspace.monster_name} icon files.", flush=True)
+
+    # Gather WEM overrides staged on the fly
+    audio_overrides = get_staged_audio_overrides(workspace)
+    if audio_overrides:
+        folders_to_pack.extend(audio_overrides)
+        for abs_wem, _ in audio_overrides:
+            print(f"  -> Packed custom audio override: {os.path.basename(abs_wem)}", flush=True)
+
+    return folders_to_pack
 
 
 def pack_cooked_assets(unrealpak_path: str, response_file: str, output_pak: str, folders_to_pack: list, has_anims: bool) -> int:

@@ -2,7 +2,9 @@
 import flet as ft
 
 class PathPicker:
-    def __init__(self, label: str, value: str, icon: str, on_browse_click):
+    # FIXED: Removed the narrow ': str' type constraint from the 'icon' parameter 
+    # to allow Flet's native 'IconData' constants without causing type checker errors.
+    def __init__(self, label: str, value: str, icon, on_browse_click):
         self.text_field = ft.TextField(
             label=label, 
             value=value, 

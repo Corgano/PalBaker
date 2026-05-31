@@ -47,7 +47,7 @@ def fix_hierarchy():
     for obj in bpy.data.objects:
         if obj.type == 'ARMATURE':
             obj.name = "Armature"
-            obj.data.name = "Armature"
+            obj.data.name = "Armature"# type: ignore
 
 def reconstruct_materials(working_dir):
     """
@@ -174,12 +174,12 @@ def reconstruct_blend(input_path, blend_path):
         import addon_utils
         for addon in addons_to_try:
             try:
-                addon_utils.enable(addon, default_check=True)
+                addon_utils.enable(addon, default_check=True)# type: ignore
                 print(f"Successfully registered and enabled addon: {addon}")
             except Exception as e:
                 pass
             
-        has_darklight = hasattr(bpy.ops, "psk") and hasattr(bpy.ops.psk, "import_file")
+        has_darklight = hasattr(bpy.ops, "psk") and hasattr(bpy.ops.psk, "import_file")# type: ignore
         has_legacy = hasattr(bpy.ops.import_scene, "psk")
         
         if not has_darklight and not has_legacy:
@@ -188,10 +188,10 @@ def reconstruct_blend(input_path, blend_path):
             
         if has_darklight:
             print("Executing modern 'bpy.ops.psk.import_file' operator...")
-            bpy.ops.psk.import_file(filepath=input_path)
+            bpy.ops.psk.import_file(filepath=input_path)# type: ignore
         else:
             print("Executing legacy 'bpy.ops.import_scene.psk' operator...")
-            bpy.ops.import_scene.psk(filepath=input_path)
+            bpy.ops.import_scene.psk(filepath=input_path)# type: ignore
     else:
         print(f"Importing FBX: {input_path}")
         bpy.ops.import_scene.fbx(

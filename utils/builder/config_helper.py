@@ -1,11 +1,8 @@
 # utils/builder/config_helper.py
-
 import os
-# utils/builder/config_helper.py (Add to the end of the file)
-
 import shutil
 
-def restore_palbaker_backup(uproject_path: str) -> bool:
+def restore_palbaker_backup(uproject_path: str | None) -> bool:
     """
     Checks if a stranded DefaultGame.ini.palbaker.bak exists in the project Config directory.
     If found, restores it to DefaultGame.ini and removes the backup file.
@@ -22,9 +19,7 @@ def restore_palbaker_backup(uproject_path: str) -> bool:
     if os.path.exists(ini_backup):
         print(f"\n[Self-Healing] Stranded PalBaker backup detected! Restoring {ini_backup} -> {ini_path}...", flush=True)
         try:
-            # Safely restore original settings
             shutil.copy2(ini_backup, ini_path)
-            # Remove the backup to prevent loop triggers
             os.remove(ini_backup)
             print("[Self-Healing] Project DefaultGame.ini successfully restored and healed.", flush=True)
             return True
@@ -32,7 +27,9 @@ def restore_palbaker_backup(uproject_path: str) -> bool:
             print(f"[Self-Healing] ERROR: Failed to restore backup: {e}", flush=True)
             
     return False
-def inject_packaging_settings(ini_path: str, ue_virtual_path: str, skeleton_virtual_path: str, anims_virtual_path: str, has_anims: bool, extra_paths: list = None):
+
+# FIXED: Changed signature of extra_paths from 'list' to 'list | None' to prevent Pylance type mismatches
+def inject_packaging_settings(ini_path: str, ue_virtual_path: str, skeleton_virtual_path: str, anims_virtual_path: str, has_anims: bool, extra_paths: list | None = None):
     """Safely updates DefaultGame.ini packaging settings without modifying existing user entries."""
     if not os.path.exists(ini_path):
         return
@@ -50,7 +47,6 @@ def inject_packaging_settings(ini_path: str, ue_virtual_path: str, skeleton_virt
         "bCookAll", "bUseIoStore", "bShareMaterialShaderCode", "MapsToCook", "+MapsToCook", "-MapsToCook"
     ]
     
-    # Compile the base cook targets
     append_lines = [
         "bCookAll=False\n",
         "bUseIoStore=False\n",
@@ -61,7 +57,6 @@ def inject_packaging_settings(ini_path: str, ue_virtual_path: str, skeleton_virt
     if has_anims:
         append_lines.append(f'+DirectoriesToAlwaysCook=(Path="{anims_virtual_path}")\n')
         
-    # Append custom third-party shaders/materials if detected
     if extra_paths:
         for path in extra_paths:
             append_lines.append(f'+DirectoriesToAlwaysCook=(Path="{path}")\n')
@@ -91,3 +86,31 @@ def inject_packaging_settings(ini_path: str, ue_virtual_path: str, skeleton_virt
         
     with open(ini_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
+
+
+class GameIniCookContext:
+    """Context Manager to safely backup, modify, and restore DefaultGame.ini during a cook run."""
+    # FIXED: Changed signature of extra_paths from 'list' to 'list | None' to prevent Pylance type mismatches
+    def __init__(self, workspace, extra_paths: list | None = None):
+        self.workspace = workspace
+        self.extra_paths = extra_paths
+
+    def __enter__(self):
+        if self.workspace.config_dir:
+            os.makedirs(self.workspace.config_dir, exist_ok=True)
+
+        if os.path.exists(self.workspace.ini_path):
+            shutil.copy2(self.workspace.ini_path, self.workspace.ini_backup)
+            inject_packaging_settings(
+                self.workspace.ini_path,
+                self.workspace.ue_virtual_path,
+                self.workspace.skeleton_virtual_path,
+                self.workspace.anims_virtual_path,
+                self.workspace.has_anims,
+                extra_paths=self.extra_paths
+            )
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if os.path.exists(self.workspace.ini_backup):
+            shutil.move(self.workspace.ini_backup, self.workspace.ini_path)

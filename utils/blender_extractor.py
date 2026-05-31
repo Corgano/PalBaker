@@ -80,7 +80,7 @@ def extract_metadata(output_path: str):
     offset_bones = []
     swap = Matrix(((1, 0, 0, 0), (0, -1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1)))
     
-    for p_bone in armature_obj.pose.bones:
+    for p_bone in armature_obj.pose.bones:# type: ignore
         raw_name = p_bone.name
         # Keep the physical name modification intact so the hierarchy matches the FBX
         ue_bone_name = raw_name.replace('.', '_')
@@ -134,7 +134,7 @@ def extract_metadata(output_path: str):
 
     for mat in bpy.data.materials:
         if not mat.use_nodes: continue
-        out_node = next((n for n in mat.node_tree.nodes if n.type == 'OUTPUT_MATERIAL'), None)
+        out_node = next((n for n in mat.node_tree.nodes if n.type == 'OUTPUT_MATERIAL'), None)# type: ignore
         if not out_node or not out_node.inputs['Surface'].links: continue
         
         bsdf = out_node.inputs['Surface'].links[0].from_node
@@ -188,9 +188,9 @@ def extract_metadata(output_path: str):
     if "--fbx" in sys.argv:
         fbx_path = sys.argv[sys.argv.index("--fbx") + 1]
         print("Clearing pose transforms to Rest Pose...")
-        for p_bone in armature_obj.pose.bones:
+        for p_bone in armature_obj.pose.bones:# type: ignore
             p_bone.matrix_basis = Matrix.Identity(4)
-        bpy.context.view_layer.update()
+        bpy.context.view_layer.update()# type: ignore
         bpy.ops.export_scene.fbx(filepath=os.path.abspath(fbx_path), use_selection=False, add_leaf_bones=False, mesh_smooth_type='FACE', armature_nodetype='ROOT', global_scale=0.01, apply_scale_options='FBX_SCALE_ALL')
 
 if __name__ == "__main__":

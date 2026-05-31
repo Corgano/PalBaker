@@ -5,6 +5,18 @@ import json
 SOUND_MAP_FILE = "resolved_sound_map.json"
 _sound_map_cache = {}
 
+# utils/audio_helper.py (Append to the end of the file)
+def get_staged_audio_overrides(workspace) -> list[tuple[str, str]]:
+    """Returns the list of absolute staged WEM source paths and their target virtual paths."""
+    overrides = []
+    if workspace.audio_media_dir and os.path.exists(workspace.audio_media_dir):
+        for wem_file in os.listdir(workspace.audio_media_dir):
+            if wem_file.endswith(".wem"):
+                abs_wem = os.path.join(workspace.audio_media_dir, wem_file)
+                virtual_wem = f"WwiseAudio/Media/{wem_file}"
+                overrides.append((abs_wem, virtual_wem))
+    return overrides
+
 def load_sound_map() -> dict:
     """Loads and caches the resolved sound mapping structure."""
     global _sound_map_cache
