@@ -17,7 +17,8 @@ def load_settings():
         "uproject": "", 
         "blender": "",
         "palworld_exe": "",
-        "show_mapped": False
+        "show_mapped": False,
+        "console_height": 200
     }
 
 def save_settings(settings):
