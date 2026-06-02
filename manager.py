@@ -10,12 +10,45 @@ import flet as ft
 def main(page: ft.Page):
     page.title = "Palworld Baker Mod Manager"
     page.theme_mode = ft.ThemeMode.DARK
-    page.window.width = 900
-    page.window.height = 800
-    page.padding = 20
 
     # Load state
     settings = load_settings()
+
+    # Set initial window size from settings
+    page.window.width = int(settings.get("window_width", 900))
+    page.window.height = int(settings.get("window_height", 800))
+    page.padding = 20
+
+    # Persist window resize/move events
+    def on_window_event(e):
+        if e.data == "resized" or e.data == "moved":
+            settings["window_width"] = int(page.window.width)
+            settings["window_height"] = int(page.window.height)
+            save_settings(settings)
+    
+    page.on_window_event = on_window_event
+
+    # Periodic background save timer (every 30 seconds)
+    import threading
+    import time
+    stop_event = threading.Event()
+
+    def periodic_save_thread():
+        last_save_settings = settings.copy()
+        while not stop_event.wait(timeout=30):
+            if settings != last_save_settings:
+                save_settings(settings)
+                last_save_settings = settings.copy()
+                print("Periodic settings save triggered.")
+
+    save_thread = threading.Thread(target=periodic_save_thread, daemon=True)
+    save_thread.start()
+
+    def on_page_close(e):
+        stop_event.set()
+        save_thread.join(timeout=1.0)
+
+    page.on_close = on_page_close
 
     # FIX: Automatically restore any stranded backups immediately on UI launch
     uproject_path = settings.get("uproject")

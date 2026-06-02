@@ -18,7 +18,9 @@ def load_settings():
         "blender": "",
         "palworld_exe": "",
         "show_mapped": False,
-        "console_height": 200
+        "console_height": 200,
+        "window_width": 900,
+        "window_height": 800
     }
 
 def save_settings(settings):
