@@ -1,3 +1,4 @@
+# utils/plugins/installer.py
 import os
 import shutil
 import subprocess

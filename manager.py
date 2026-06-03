@@ -52,6 +52,9 @@ class MainWindow(QMainWindow):
         # Autofill settings if empty
         self.run_autofills()
         
+        # Automatically detect and fix Unreal Project requirements (Remote Execution & Cooking configs)
+        self.auto_configure_project()
+        
         # Periodic save timer (30 seconds) on Qt's main event loop (safer than raw background threads)
         self.last_saved_settings = self.settings.copy()
         self.save_timer = QTimer(self)
@@ -106,6 +109,34 @@ class MainWindow(QMainWindow):
         if changed:
             save_settings(self.settings)
             self.settings_view.update_settings(self.settings)
+
+    def auto_configure_project(self):
+        """Automatically checks the open project's config and enables remote python execution if disabled."""
+        uproject_path = self.settings.get("uproject")
+        ue_root = self.settings.get("ue_root")
+        
+        if uproject_path and os.path.exists(uproject_path) and ue_root and os.path.exists(ue_root):
+            from utils.plugin_manager import check_project_requirements
+            try:
+                reqs = check_project_requirements(ue_root, uproject_path)
+                
+                # Auto-heal remote execution python settings (DefaultEngine.ini)
+                if reqs.get("needs_remote_exec_enable"):
+                    from utils.plugins.installer import enable_remote_execution_settings
+                    success, msg = enable_remote_execution_settings(uproject_path)
+                    if success:
+                        print("Auto-enabled Python Remote Execution settings in DefaultEngine.ini.")
+                        self.mods_view.write_log("Project auto-configured: Enabled Python Remote Execution.", "success")
+                        
+                # Auto-heal project packaging settings (DefaultGame.ini)
+                if reqs.get("needs_cooking_setup"):
+                    from utils.plugins.installer import enable_cooking_settings
+                    success, msg = enable_cooking_settings(uproject_path)
+                    if success:
+                        print("Auto-configured project cooking packaging settings in DefaultGame.ini.")
+                        self.mods_view.write_log("Project auto-configured: Updated Packaging Settings.", "success")
+            except Exception as e:
+                print(f"Warning during project auto-configuration: {e}")
 
     def check_multiple_blenders(self):
         blender_path = self.settings.get("blender")

@@ -36,7 +36,7 @@ def open_file_in_explorer(file_path: str):
                 subprocess.Popen(['xdg-open', parent_dir])
 
 class ModItem(QFrame):
-    def __init__(self, mod_data: dict, on_action_click, on_cancel_click, on_pick_icon, on_pick_audio, on_play_audio, on_clear_audio, is_building: bool, show_mapped: bool):
+    def __init__(self, mod_data: dict, on_action_click, on_cancel_click, on_pick_icon, on_pick_audio, on_play_audio, on_clear_audio, is_building: bool, show_mapped: bool, on_toggle_altermatic=None, on_add_variant=None, on_edit_variant=None, on_delete_variant=None):
         super().__init__()
         self.mod_data = mod_data
         self.on_action_click = on_action_click
@@ -47,6 +47,10 @@ class ModItem(QFrame):
         self.on_clear_audio = on_clear_audio
         self.is_building = is_building
         self.show_mapped = show_mapped
+        self.on_toggle_altermatic = on_toggle_altermatic
+        self.on_add_variant = on_add_variant
+        self.on_edit_variant = on_edit_variant
+        self.on_delete_variant = on_delete_variant
 
         self.import_total_steps = 1
         self.import_current_step = 0
@@ -107,6 +111,21 @@ class ModItem(QFrame):
                 }}
             """)  # <--- UPDATED
             badge_layout.addWidget(badge_lbl)
+
+        if mod_data.get("is_altermatic_active"):
+            altermatic_lbl = QLabel("ALTERMATIC")
+            altermatic_lbl.setToolTip("This Pal has Altermatic variant overrides active.")
+            altermatic_lbl.setStyleSheet(f"""
+                QLabel {{
+                    background-color: #9c27b0;
+                    color: white;
+                    font-size: {Theme.FONT_SIZE_TINY};
+                    font-weight: bold;
+                    border-radius: {Theme.RADIUS_NORMAL};
+                    padding: 2px 6px;
+                }}
+            """)
+            badge_layout.addWidget(altermatic_lbl)
         self.main_row_layout.addLayout(badge_layout)
 
         self.main_row_layout.addStretch(1)
@@ -180,7 +199,11 @@ class ModItem(QFrame):
             on_pick_icon=on_pick_icon,
             on_pick_audio=on_pick_audio,
             on_play_audio=on_play_audio,
-            on_clear_audio=on_clear_audio
+            on_clear_audio=on_clear_audio,
+            on_toggle_altermatic=on_toggle_altermatic,
+            on_add_variant=on_add_variant,
+            on_edit_variant=on_edit_variant,
+            on_delete_variant=on_delete_variant
         )
         self.details_container = QFrame()
         self.details_container.setVisible(False)
@@ -194,6 +217,9 @@ class ModItem(QFrame):
         self.view = self
 
     def update_card_styles(self, border_color):
+        from PyQt6.sip import isdeleted
+        if isdeleted(self):
+            return
         self.setStyleSheet(Theme.get_card_style(border_color))  # <--- UPDATED
 
     def contextMenuEvent(self, event):
@@ -237,6 +263,25 @@ class ModItem(QFrame):
         decompile = menu.addAction("Generate Sources")
         decompile.setEnabled(self.mod_data["has_ue"])
         decompile.triggered.connect(lambda: self.on_action_click(self.mod_data, "decompile"))
+
+        if self.on_toggle_altermatic:
+            is_alt = self.mod_data.get("is_altermatic_active", False)
+            alt_action = menu.addAction("Disable Altermatic" if is_alt else "Enable Altermatic")
+            alt_action.triggered.connect(lambda: self.on_toggle_altermatic(self.mod_data, not is_alt))
+
+        if self.mod_data.get("is_altermatic_active") and self.on_add_variant:
+            add_var = menu.addAction("Add Altermatic Variant")
+            add_var.triggered.connect(lambda: self.on_add_variant(self.mod_data))
+
+        if self.mod_data.get("is_altermatic_active"):
+            variants = self.mod_data.get("altermatic_variants", [])
+            for idx, v in enumerate(variants):
+                label = v.get("label", f"variant_{idx}")
+                var_menu = menu.addMenu(f"Variant: {label.split('_', 1)[-1] if '_' in label else label}")
+                edit_var = var_menu.addAction("Edit")
+                edit_var.triggered.connect(lambda _, m=self.mod_data, i=idx: self.on_edit_variant(m, i) if self.on_edit_variant else None)
+                del_var = var_menu.addAction("Delete")
+                del_var.triggered.connect(lambda _, m=self.mod_data, i=idx: self.on_delete_variant(m, i) if self.on_delete_variant else None)
 
         menu.exec(self.overflow_btn.mapToGlobal(self.overflow_btn.rect().bottomLeft()))
 

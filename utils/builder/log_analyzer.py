@@ -31,7 +31,7 @@ class LogAnalyzer:
             },
             {
                 "id": "blender_psk_importer_missing",
-                "keywords": ["No PSK importer addon/extension is registered", "No module named 'io_scene_psk_psa'", "No module named 'io_import_scene_unreal_psa_psk'"],
+                "keywords": ["No PSK importer addon/extension is registered", "No working PSK importer operator", "No module named 'io_scene_psk_psa'", "No module named 'io_import_scene_unreal_psa_psk'"],
                 "title": "Blender PSK Addon Missing",
                 "solution": "Headless Blender failed to import the .psk file because the PSK Importer addon is not registered. Please install/enable the 'io_scene_psk_psa' extension in your Blender installation."
             },
@@ -99,8 +99,16 @@ class LogAnalyzer:
             category = "error"
             self.raw_errors.append(line)
         elif "warning:" in line_lower:
-            category = "warning"
-            self.raw_warnings.append(line)
+            # FILTER: Exclude harmless Blender performance and fallback notices
+            # to avoid false-positive Troubleshooting Advisor popups.
+            is_harmless_blender_warning = (
+                "add-on missing 'bl_info'" in line_lower or
+                "could not query extension" in line_lower or
+                "no mapping resolved for 'dots stroke'" in line_lower
+            )
+            if not is_harmless_blender_warning:
+                category = "warning"
+                self.raw_warnings.append(line)
         elif ">>>" in line:
             category = "stage"
         elif "success:" in line_lower:

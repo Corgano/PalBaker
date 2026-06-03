@@ -1,3 +1,4 @@
+# utils/plugins/detector.py
 import os
 import glob
 

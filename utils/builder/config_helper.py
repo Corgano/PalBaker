@@ -28,39 +28,38 @@ def restore_palbaker_backup(uproject_path: str | None) -> bool:
             
     return False
 
-# FIXED: Changed signature of extra_paths from 'list' to 'list | None' to prevent Pylance type mismatches
-def inject_packaging_settings(ini_path: str, ue_virtual_path: str, skeleton_virtual_path: str, anims_virtual_path: str, has_anims: bool, extra_paths: list | None = None):
-    """Safely updates DefaultGame.ini packaging settings without modifying existing user entries."""
+def inject_packaging_settings(ini_path: str, ue_virtual_path: str, skeleton_virtual_path: str, anims_virtual_path: str, has_anims: bool, should_cook_vanilla: bool, extra_paths: list | None = None):
     if not os.path.exists(ini_path):
         return
-        
+
     with open(ini_path, "r", encoding="utf-8-sig", errors="replace") as f:
         lines = f.readlines()
-        
+
     new_lines = []
     in_section = False
     section_found = False
     section_header = "[/Script/UnrealEd.ProjectPackagingSettings]"
-    
+
     keys_to_override = [
         "DirectoriesToAlwaysCook", "+DirectoriesToAlwaysCook", "-DirectoriesToAlwaysCook",
         "bCookAll", "bUseIoStore", "bShareMaterialShaderCode", "MapsToCook", "+MapsToCook", "-MapsToCook"
     ]
-    
+
     append_lines = [
         "bCookAll=False\n",
         "bUseIoStore=False\n",
         "bShareMaterialShaderCode=False\n",
-        f'+DirectoriesToAlwaysCook=(Path="{ue_virtual_path}")\n',
-        f'+DirectoriesToAlwaysCook=(Path="{skeleton_virtual_path}")\n',
     ]
+    if should_cook_vanilla:
+        append_lines.append(f'+DirectoriesToAlwaysCook=(Path="{ue_virtual_path}")\n')
+    append_lines.append(f'+DirectoriesToAlwaysCook=(Path="{skeleton_virtual_path}")\n')
     if has_anims:
         append_lines.append(f'+DirectoriesToAlwaysCook=(Path="{anims_virtual_path}")\n')
-        
+
     if extra_paths:
         for path in extra_paths:
             append_lines.append(f'+DirectoriesToAlwaysCook=(Path="{path}")\n')
-            
+
     append_lines.append("MapsToCook=\n")
     
     for line in lines:
@@ -89,8 +88,6 @@ def inject_packaging_settings(ini_path: str, ue_virtual_path: str, skeleton_virt
 
 
 class GameIniCookContext:
-    """Context Manager to safely backup, modify, and restore DefaultGame.ini during a cook run."""
-    # FIXED: Changed signature of extra_paths from 'list' to 'list | None' to prevent Pylance type mismatches
     def __init__(self, workspace, extra_paths: list | None = None):
         self.workspace = workspace
         self.extra_paths = extra_paths
@@ -101,12 +98,16 @@ class GameIniCookContext:
 
         if os.path.exists(self.workspace.ini_path):
             shutil.copy2(self.workspace.ini_path, self.workspace.ini_backup)
+
+            should_cook_vanilla = not self.workspace.is_altermatic_active or self.workspace.base_type == "custom"
+
             inject_packaging_settings(
                 self.workspace.ini_path,
                 self.workspace.ue_virtual_path,
                 self.workspace.skeleton_virtual_path,
                 self.workspace.anims_virtual_path,
                 self.workspace.has_anims,
+                should_cook_vanilla,
                 extra_paths=self.extra_paths
             )
         return self

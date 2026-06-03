@@ -29,6 +29,7 @@ class ModsView(QWidget):
     prompt_overwrite_warning_signal = pyqtSignal(object, object)
     prompt_decompile_options_signal = pyqtSignal(object)
     prompt_troubleshooting_advisor_signal = pyqtSignal(object)
+    clear_ui_cache_signal = pyqtSignal()  # <--- ADDED: Thread-safe cache clear signal
 
     def __init__(self, parent_window, settings: dict):
         super().__init__()
@@ -52,6 +53,7 @@ class ModsView(QWidget):
         self.prompt_overwrite_warning_signal.connect(self._prompt_overwrite_warning_slot)
         self.prompt_decompile_options_signal.connect(self._prompt_decompile_options_slot)
         self.prompt_troubleshooting_advisor_signal.connect(self._prompt_troubleshooting_advisor_slot)
+        self.clear_ui_cache_signal.connect(self.clear_ui_cache)  # <--- ADDED: Connect signal to slot
         
         # Layout definition
         main_layout = QVBoxLayout(self)
@@ -84,7 +86,7 @@ class ModsView(QWidget):
         badge_label = QLabel("Tags:")
         badge_label.setStyleSheet("font-weight: bold; color: white;")
         self.badge_chips.addWidget(badge_label)
-        tags = ["RAW", "SOURCE", "UE ASSETS", "MODIFIED"]
+        tags = ["RAW", "SOURCE", "UE ASSETS", "MODIFIED", "ALTERMATIC"]
         self.tag_buttons = {}
         for tag in tags:
             btn = QPushButton(tag)
@@ -171,7 +173,15 @@ class ModsView(QWidget):
         t.start()
 
     def run_async_task(self, func, *args):
-        func(*args)
+        import threading
+        def thread_target():
+            coro = func(*args)
+            try:
+                asyncio.run(coro)
+            except Exception as e:
+                self.write_log(f"ERROR inside background task thread: {e}", "error")
+        t = threading.Thread(target=thread_target, daemon=True)
+        t.start()
 
     def clear_ui_cache(self):
         for item in self.cached_components.values():
@@ -241,7 +251,11 @@ class ModsView(QWidget):
                     on_play_audio=self.controller.play_audio,
                     on_clear_audio=self.controller.clear_audio,
                     is_building=global_building,
-                    show_mapped=self.controller.show_mapped
+                    show_mapped=self.controller.show_mapped,
+                    on_toggle_altermatic=self.controller.toggle_altermatic,
+                    on_add_variant=self.controller.add_altermatic_variant,
+                    on_edit_variant=self.controller.edit_altermatic_variant,
+                    on_delete_variant=self.controller.delete_altermatic_variant
                 )
                 item.set_state(global_building, is_active_target=(name == active_mod_name))
                 self.cached_components[name] = item
@@ -252,6 +266,18 @@ class ModsView(QWidget):
         self.force_update()
 
     def _write_log_slot(self, text: str, category: str, flush: bool):
+        # 1. Colorized Mirror to terminal/host console (VS Code, CMD, Terminal)
+        ansi_colors = {
+            "error": "\033[91m",     # Light Red
+            "warning": "\033[93m",   # Light Yellow
+            "success": "\033[92m",   # Light Green
+            "stage": "\033[96m",     # Light Cyan
+            "standard": "\033[0m"    # Reset
+        }
+        color_code = ansi_colors.get(category, "\033[0m")
+        print(f"{color_code}{text}\033[0m", flush=True)
+
+        # 2. Append to GUI log window
         color_map = {
             "error": Theme.ERROR, "warning": Theme.WARNING, 
             "success": Theme.SUCCESS, "stage": Theme.CYAN_ACCENT, "standard": Theme.TEXT_MUTED
@@ -360,8 +386,102 @@ class ModsView(QWidget):
         if hasattr(dlg, 'exec'):
             dlg.exec()
 
+    def set_log_autoscroll(self, enabled: bool):
+        if enabled:
+            self.log_view_widget.verticalScrollBar().setValue(
+                self.log_view_widget.verticalScrollBar().maximum()
+            )
+
     def pop_dialog(self):
         pass
+
+    def show_snackbar(self, message: str, color: str = "green"):
+        from PyQt6.QtWidgets import QMessageBox
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle("Notification")
+        msg.setText(message)
+        msg.setStyleSheet(f"background-color: {Theme.BG_MAIN}; color: white;")
+        msg.exec()
+
+    def show_add_variant_dialog(self, mod_data: dict):
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QCheckBox, QComboBox, QPushButton
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Add Altermatic Variant")
+        dlg.setStyleSheet(Theme.get_dialog_style())
+        dlg.setMinimumWidth(400)
+        layout = QVBoxLayout(dlg)
+
+        name_layout = QVBoxLayout()
+        name_layout.addWidget(QLabel("Variant Name:"))
+        name_input = QLineEdit()
+        name_input.setPlaceholderText("e.g. Shiny, Holiday, Dark...")
+        name_layout.addWidget(name_input)
+        layout.addLayout(name_layout)
+
+        custom_mesh_cb = QCheckBox("Use Custom Skeleton Mesh (clone .blend)")
+        custom_mesh_cb.setChecked(True)
+        layout.addWidget(custom_mesh_cb)
+
+        source_layout = QVBoxLayout()
+        src_label = QLabel("Clone Source:")
+        source_layout.addWidget(src_label)
+        src_combo = QComboBox()
+        src_combo.addItem("base", "base")
+        variants = mod_data.get("altermatic_variants", [])
+        for v in variants:
+            lbl = v.get("label", "")
+            if lbl != "base":
+                src_combo.addItem(lbl.split("_", 1)[-1] if "_" in lbl else lbl, v.get("SkeletonSource", ""))
+        source_layout.addWidget(src_combo)
+        source_widget = QWidget()
+        source_widget.setLayout(source_layout)
+        source_widget.setVisible(True)
+        layout.addWidget(source_widget)
+
+        custom_mesh_cb.toggled.connect(lambda checked: source_widget.setVisible(checked))
+
+        btn_layout = QHBoxLayout()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dlg.reject)
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addStretch()
+        add_btn = QPushButton("Add Variant")
+        add_btn.setStyleSheet(f"background-color: {Theme.PRIMARY}; color: white;")
+        add_btn.clicked.connect(lambda: (
+            self.controller.altermatic.execute_add_variant(
+                mod_data, name_input.text(),
+                custom_mesh_cb.isChecked(),
+                src_combo.currentData() if custom_mesh_cb.isChecked() else ""
+            ),
+            dlg.accept()
+        ))
+        btn_layout.addWidget(add_btn)
+        layout.addLayout(btn_layout)
+        dlg.exec()
+
+    def show_edit_variant_dialog(self, character_id: str, index: int, variant_data: dict, blend_files: list[str], available_mats: list[str]):
+        from components.mods.altermatic_dialog import AltermaticDialog
+        dlg = AltermaticDialog(
+            parent=self.main_page,
+            settings=self.settings,
+            traits_db=self.controller.traits_db,
+            on_save_callback=self.controller.save_altermatic_variant_callback,
+            on_refresh_callback=self.controller.run_refresh_pipeline_callback,
+            on_delete_callback=self.controller.delete_altermatic_variant_by_index
+        )
+        dlg.show(character_id, index, variant_data, blend_files, available_mats)
+
+    def show_delete_variant_confirm(self, current_char_id: str, index: int, variant_data: dict, is_material_only_reskin: bool):
+        from PyQt6.QtWidgets import QMessageBox
+        clean_label = variant_data.get("label", "unknown").split("_", 1)[-1] if "_" in variant_data.get("label", "") else variant_data.get("label", "unknown")
+        msg = f"Are you sure you want to delete variant '{clean_label}'?"
+        if not is_material_only_reskin:
+            msg += f"\nThe associated .blend file will also be removed."
+        result = QMessageBox.question(self, "Confirm Delete", msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if result == QMessageBox.StandardButton.Yes:
+            self.controller.altermatic.execute_delete_variant(current_char_id, index)
 
     def force_update(self):
         self.update()

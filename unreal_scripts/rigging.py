@@ -1,70 +1,63 @@
-# unreal_scripts/rigging.py
 import unreal
 import os
 
-def apply_rigging(working_dir, ue_path, folder_name, target_asset_path):
-    json_path = os.path.join(working_dir, "bone_data.json")
+def apply_rigging(working_dir, ue_path, folder_name, target_asset_path, bone_data_file="bone_data.json"):
+    json_path = os.path.join(working_dir, bone_data_file)
     if not os.path.exists(json_path):
         return
 
-    print("Checking for Animation Blueprint to apply advanced rigging...")
+    print(f"Checking for Animation Blueprint to apply advanced rigging to: {target_asset_path}")
     anim_bp = None
     ar = unreal.AssetRegistryHelpers.get_asset_registry()
     asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
-    
-    skeleton_dir = f"/Game/Pal/Model/Character/Skeleton/{folder_name}"
-    
-    # FIXED: Wrapped string path in unreal.Name() and added non-None check to satisfy Pylance
-    skeleton_assets = ar.get_assets_by_path(unreal.Name(skeleton_dir), recursive=True)
-    anim_bps = []
-    if skeleton_assets is not None:
-        anim_bps = [a for a in skeleton_assets if str(a.asset_class_path.asset_name) == "AnimBlueprint"]
-    
-    if anim_bps:
-        anim_bp = unreal.EditorAssetLibrary.load_asset(anim_bps[0].package_name)
+
+    mesh_name = target_asset_path.split("/")[-1]
+    base_mesh_name = mesh_name.replace("SK_", "")
+    bp_name = f"{base_mesh_name}_BP"
+
+    if "Palbaker" in target_asset_path:
+        target_bp_dir = "/".join(target_asset_path.split("/")[:-1])
     else:
-        # FIXED: Wrapped string path in unreal.Name() and added non-None check to satisfy Pylance
-        monster_assets = ar.get_assets_by_path(unreal.Name(ue_path), recursive=True)
-        if monster_assets is not None:
-            anim_bps = [a for a in monster_assets if str(a.asset_class_path.asset_name) == "AnimBlueprint"]
-        if anim_bps:
-            anim_bp = unreal.EditorAssetLibrary.load_asset(anim_bps[0].package_name)
-            
-    if not anim_bp:
-        print(f"No Animation Blueprint found. Generating a new one for {folder_name}...")
-        skeleton_path = f"/Game/Pal/Model/Character/Skeleton/{folder_name}/SK_{folder_name}_Skeleton"
-        skel = unreal.EditorAssetLibrary.load_asset(skeleton_path)
-        
-        if skel:
-            factory = unreal.AnimBlueprintFactory()
-            factory.set_editor_property('target_skeleton', skel)
-            bp_name = f"{folder_name}_BP"
-            anim_bp = asset_tools.create_asset(bp_name, skeleton_dir, unreal.AnimBlueprint.static_class(), factory)
-            if anim_bp:
-                print(f"Created new Animation Blueprint: {bp_name}")
-        else:
-            print(f"ERROR: Cannot create Animation Blueprint because skeleton {skeleton_path} is missing.")
-            
+        target_bp_dir = f"/Game/Pal/Model/Character/Skeleton/{folder_name}"
+
+    target_bp_path = f"{target_bp_dir}/{bp_name}"
+    skeleton_path = f"/Game/Pal/Model/Character/Skeleton/{folder_name}/SK_{folder_name}_Skeleton"
+
+    if unreal.EditorAssetLibrary.does_asset_exist(target_bp_path):
+        print(f"Cleaning old Animation Blueprint for fresh rebuild: {target_bp_path}")
+        unreal.EditorAssetLibrary.delete_asset(target_bp_path)
+
+    print(f"Generating new custom Animation Blueprint: {target_bp_path}")
+    skel = unreal.EditorAssetLibrary.load_asset(skeleton_path)
+    if skel:
+        factory = unreal.AnimBlueprintFactory()
+        factory.set_editor_property('target_skeleton', skel)
+        unreal.EditorAssetLibrary.make_directory(target_bp_dir)
+        anim_bp = asset_tools.create_asset(bp_name, target_bp_dir, unreal.AnimBlueprint.static_class(), factory)
+        if anim_bp:
+            print(f"Successfully generated new Animation Blueprint: {bp_name}")
+    else:
+        print(f"ERROR: Cannot create Animation Blueprint because skeleton {skeleton_path} is missing.")
+
     if anim_bp:
         print(f"Applying PalBaker rigging setup to: {anim_bp.get_name()}")
         try:
             success = unreal.AnimScriptingLibrary.apply_pal_baker_rigging(anim_bp, json_path)
             if success:
                 print("Rigging applied and compiled successfully.")
-                
-                if target_asset_path:
-                    mesh_to_update = unreal.EditorAssetLibrary.load_asset(target_asset_path)
-                    if mesh_to_update:
-                        bp_name = anim_bp.get_name()
-                        bp_path_name = anim_bp.get_path_name().split(".")[0]
-                        class_path = f"{bp_path_name}.{bp_name}_C"
-                        
-                        gen_class = unreal.load_class(None, class_path)
-                        if gen_class:
-                            mesh_to_update.set_editor_property('post_process_anim_blueprint', gen_class)
-                            unreal.EditorAssetLibrary.save_loaded_asset(mesh_to_update)
-                            print(f"Successfully bound {gen_class.get_name()} to the Mesh!")
-            else:
-                print("C++ Rigging module returned false.")
+
+                loaded_mesh = unreal.EditorAssetLibrary.load_asset(target_asset_path)
+
+                bp_name_actual = anim_bp.get_name()
+                bp_path_name = anim_bp.get_path_name().split(".")[0]
+                class_path = f"{bp_path_name}.{bp_name_actual}_C"
+
+                gen_class = unreal.load_class(None, class_path)
+                if gen_class and loaded_mesh:
+                    loaded_mesh.set_editor_property('post_process_anim_blueprint', gen_class)
+                    unreal.EditorAssetLibrary.save_loaded_asset(loaded_mesh)
+                    print(f"Successfully bound {gen_class.get_name()} to Mesh: {loaded_mesh.get_name()}!")
+                else:
+                    print("Failed to load generated blueprint class or skeletal mesh target.")
         except Exception as e:
             print(f"Failed to execute rigging setup: {e}")

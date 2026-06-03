@@ -17,13 +17,17 @@ def run_async(coro):
         asyncio.run(coro)
 
 class ModDetails(QWidget):
-    def __init__(self, mod_data: dict, on_pick_icon, on_pick_audio, on_play_audio, on_clear_audio):
+    def __init__(self, mod_data: dict, on_pick_icon, on_pick_audio, on_play_audio, on_clear_audio, on_toggle_altermatic=None, on_add_variant=None, on_edit_variant=None, on_delete_variant=None):
         super().__init__()
         self.mod_data = mod_data
         self.on_pick_icon = on_pick_icon
         self.on_pick_audio = on_pick_audio
         self.on_play_audio = on_play_audio
         self.on_clear_audio = on_clear_audio
+        self.on_toggle_altermatic = on_toggle_altermatic
+        self.on_add_variant = on_add_variant
+        self.on_edit_variant = on_edit_variant
+        self.on_delete_variant = on_delete_variant
 
         self.setStyleSheet(Theme.get_details_style())  # <--- UPDATED
 
@@ -161,7 +165,71 @@ class ModDetails(QWidget):
             
         audio_section_layout.addStretch()
         layout.addLayout(audio_section_layout, 1)
-        
+
+        # --- LEFT-CENTER: ALTERMATIC SECTION ---
+        altermatic_section = QVBoxLayout()
+        altermatic_section.setSpacing(5)
+
+        alt_title = QLabel("Altermatic Variants")
+        alt_title.setStyleSheet(f"font-size: {Theme.FONT_SIZE_SMALL}; font-weight: bold; color: white;")
+        altermatic_section.addWidget(alt_title)
+
+        is_active = mod_data.get("is_altermatic_active", False)
+        self.altermatic_toggle_btn = QPushButton("Disable Altermatic" if is_active else "Enable Altermatic")
+        self.altermatic_toggle_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {"#9c27b0" if is_active else Theme.BG_SURFACE};
+                color: white;
+                font-weight: bold;
+                border-radius: {Theme.RADIUS_NORMAL};
+                padding: 4px 10px;
+            }}
+        """)
+        if self.on_toggle_altermatic:
+            self.altermatic_toggle_btn.clicked.connect(lambda: self.on_toggle_altermatic(self.mod_data, not is_active))
+        altermatic_section.addWidget(self.altermatic_toggle_btn)
+
+        if is_active:
+            self.variant_list_widget = QFrame()
+            variant_list_layout = QVBoxLayout(self.variant_list_widget)
+            variant_list_layout.setSpacing(3)
+
+            variants = mod_data.get("altermatic_variants", [])
+            for idx, v in enumerate(variants):
+                row = QHBoxLayout()
+                label_short = v.get("label", f"variant_{idx}")
+                if "_" in label_short:
+                    label_short = label_short.split("_", 1)[-1]
+                label_w = QLabel(label_short)
+                label_w.setStyleSheet(f"color: white; font-size: {Theme.FONT_SIZE_SMALL};")
+                row.addWidget(label_w)
+                row.addStretch()
+
+                edit_btn = QPushButton("Edit")
+                edit_btn.setFixedWidth(50)
+                edit_btn.clicked.connect(lambda _, m=self.mod_data, i=idx: self.on_edit_variant(m, i) if self.on_edit_variant else None)
+                row.addWidget(edit_btn)
+
+                del_btn = QPushButton("Del")
+                del_btn.setFixedWidth(50)
+                del_btn.setStyleSheet(f"color: {Theme.ERROR};")
+                del_btn.clicked.connect(lambda _, m=self.mod_data, i=idx: self.on_delete_variant(m, i) if self.on_delete_variant else None)
+                row.addWidget(del_btn)
+
+                container = QWidget()
+                container.setLayout(row)
+                variant_list_layout.addWidget(container)
+
+            if self.on_add_variant:
+                add_btn = QPushButton("+ Add Variant")
+                add_btn.clicked.connect(lambda: self.on_add_variant(self.mod_data))
+                variant_list_layout.addWidget(add_btn)
+
+            altermatic_section.addWidget(self.variant_list_widget)
+
+        altermatic_section.addStretch()
+        layout.addLayout(altermatic_section, 0)
+
         self.view = self
 
     def handle_icon_click(self):

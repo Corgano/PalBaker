@@ -30,7 +30,7 @@ def run_and_stream(cmd_args) -> bool:
             
             # Scan for issues
             line_lower = stripped.lower()
-            if "error:" in line_lower or "warning:" in line_lower:
+            if "error:" in line_lower:
                 had_issues = True
             
     process.wait()
@@ -51,18 +51,39 @@ def clean_cook_environment(workspace):
                 print(f"CRITICAL ERROR: Cannot overwrite '{os.path.basename(p)}'. Close the game!", flush=True)
                 sys.exit(1)
 
-    # Clean cooked folders
     if os.path.exists(workspace.cooked_dir): shutil.rmtree(workspace.cooked_dir, ignore_errors=True)
+    if os.path.exists(workspace.cooked_altermatic_dir): shutil.rmtree(workspace.cooked_altermatic_dir, ignore_errors=True)
     if os.path.exists(workspace.cooked_skel_dir): shutil.rmtree(workspace.cooked_skel_dir, ignore_errors=True)
     if os.path.exists(workspace.cooked_anims_dir): shutil.rmtree(workspace.cooked_anims_dir, ignore_errors=True)
+    if os.path.exists(workspace.cooked_bp_dir): shutil.rmtree(workspace.cooked_bp_dir, ignore_errors=True)
 
 
 def resolve_packaging_manifest(workspace, has_anims: bool) -> list[tuple[str, str]]:
-    """Compiles the absolute file sources and virtual destination paths to pass to UnrealPak."""
-    folders_to_pack = [
-        (workspace.cooked_dir, workspace.ue_virtual_path.replace("/Game/", "")),
-        (workspace.cooked_skel_dir, workspace.skeleton_virtual_path.replace("/Game/", ""))
-    ]
+    folders_to_pack = []
+
+    should_pack_vanilla = not workspace.is_altermatic_active or workspace.base_type == "custom"
+    if should_pack_vanilla:
+        if os.path.exists(workspace.cooked_dir):
+            folders_to_pack.append((workspace.cooked_dir, workspace.ue_virtual_path.replace("/Game/", "")))
+
+    if os.path.exists(workspace.cooked_skel_dir):
+        folders_to_pack.append((workspace.cooked_skel_dir, workspace.skeleton_virtual_path.replace("/Game/", "")))
+
+    if workspace.is_altermatic_active and os.path.exists(workspace.cooked_altermatic_dir):
+        folders_to_pack.append((workspace.cooked_altermatic_dir, workspace.ue_altermatic_virtual_path.replace("/Game/", "")))
+        print("  -> Altermatic variants detected: Packing custom variant meshes.", flush=True)
+
+    if hasattr(workspace, 'cooked_bp_dir') and os.path.exists(workspace.cooked_bp_dir):
+        bp_cooked_base = os.path.join(workspace.cooked_bp_dir, f"BP_{workspace.monster_name}")
+        bp_parts_found = False
+        for ext in [".uasset", ".uexp", ".ubulk"]:
+            cooked_file = bp_cooked_base + ext
+            if os.path.exists(cooked_file):
+                virtual_file = f"Pal/Blueprint/Character/Monster/PalActorBP/{workspace.monster_name}/BP_{workspace.monster_name}{ext}"
+                folders_to_pack.append((cooked_file, virtual_file))
+                bp_parts_found = True
+        if bp_parts_found:
+            print(f"  -> Custom Blueprint detected: Packing only BP_{workspace.monster_name} Blueprint files.", flush=True)
 
     if has_anims:
         folders_to_pack.append((workspace.cooked_anims_dir, workspace.anims_virtual_path.replace("/Game/", "")))
@@ -87,7 +108,6 @@ def resolve_packaging_manifest(workspace, has_anims: bool) -> list[tuple[str, st
         if icon_parts_found:
             print(f"  -> Custom Icon detected: Packing only {workspace.monster_name} icon files.", flush=True)
 
-    # Gather WEM overrides staged on the fly
     audio_overrides = get_staged_audio_overrides(workspace)
     if audio_overrides:
         folders_to_pack.extend(audio_overrides)
@@ -102,6 +122,7 @@ def pack_cooked_assets(unrealpak_path: str, response_file: str, output_pak: str,
     Creates the response file for UnrealPak and executes the packaging.
     Supports both Directory-level and File-level packaging paths.
     """
+    os.makedirs(os.path.dirname(response_file), exist_ok=True)
     files_found = 0
     with open(response_file, "w") as f:
         for path_on_disk, relative_virtual_path in folders_to_pack:

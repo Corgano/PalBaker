@@ -1,3 +1,4 @@
+# utils\plugin_manager.py
 import os
 import sys
 import json  # ADDED: Fix NameError inside main execution block

@@ -1,5 +1,5 @@
 # components/mods/dialogs.py
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QScrollArea
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QScrollArea, QWidget
 from PyQt6.QtCore import Qt
 from utils.theme import Theme  # <--- UPDATED
 

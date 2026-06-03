@@ -55,9 +55,8 @@ def reconstruct_materials(working_dir):
     locally, it performs a search across FModel folders to resolve dependencies dynamically.
     """
     # FModel base root directory is 7 layers up from the CHARACTER directory
-    # Exports/Pal/Content/Pal/Model/Character/Category/Monster ->Exports is level 7
+    # Exports/Pal/Content/Pal/Model/Character/Category/Monster -> Exports is level 7
     # Let's derive fmodel_root safely:
-    # working_dir e.g.: "FMODEL_ROOT/Exports/Pal/Content/Pal/Model/Character/Category/Monster"
     fmodel_root = working_dir
     parts = os.path.normpath(working_dir).replace("\\", "/").split("/")
     
@@ -150,48 +149,150 @@ def reconstruct_blend(input_path, blend_path):
     input_path = os.path.abspath(input_path).replace("\\", "/")
     blend_path = os.path.abspath(blend_path).replace("\\", "/")
 
+    print("Beginning path injection to locate Blender addons/extensions...", flush=True)
+
+    # 1. Inject script paths / legacy addons discovered through Blender's API
+    try:
+        for script_path in bpy.utils.script_paths():
+            addons_path = os.path.join(script_path, "addons")
+            if os.path.exists(addons_path) and addons_path not in sys.path:
+                sys.path.append(addons_path)
+                print(f"Injected scripts addons path from bpy: {addons_path}", flush=True)
+    except Exception as e:
+        print(f"Note: Could not query script_paths: {e}", flush=True)
+
+    # 2. Inject modern extension repositories registered in preferences (Blender 4.2+)
+    try:
+        if hasattr(bpy.context.preferences, "extensions"):
+            for repo in bpy.context.preferences.extensions.repositories:
+                repo_path = os.path.abspath(repo.directory).replace("\\", "/")
+                if os.path.exists(repo_path) and repo_path not in sys.path:
+                    sys.path.append(repo_path)
+                    print(f"Injected extension repository path from preferences: {repo_path}", flush=True)
+    except Exception as e:
+        print(f"Note: Could not query extension repositories from preferences: {e}", flush=True)
+
+    # 3. Fallback standard local scanning for Windows AppData
     if os.name == 'nt':
         appdata = os.environ.get("APPDATA", "")
         if appdata:
-            ext_path = os.path.join(appdata, "Blender Foundation", "Blender", "5.1", "extensions")
-            if os.path.exists(ext_path) and ext_path not in sys.path:
-                sys.path.append(ext_path)
-                print(f"Injected AppData extensions path: {ext_path}")
+            version_str = f"{bpy.app.version[0]}.{bpy.app.version[1]}"
+            ext_dir = os.path.join(appdata, "Blender Foundation", "Blender", version_str, "extensions")
+            
+            if os.path.exists(ext_dir):
+                if ext_dir not in sys.path:
+                    sys.path.append(ext_dir)
+                    print(f"Injected fallback extensions root: {ext_dir}", flush=True)
+                
+                for entry in os.listdir(ext_dir):
+                    entry_path = os.path.join(ext_dir, entry)
+                    if os.path.isdir(entry_path):
+                        if entry_path not in sys.path:
+                            sys.path.append(entry_path)
+                            print(f"Injected fallback repository subdirectory: {entry_path}", flush=True)
 
     print("Clearing default scene objects...")
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
 
     if input_path.lower().endswith(".psk"):
-        print(f"Importing PSK: {input_path}")
-        addons_to_try = [
+        print(f"Importing PSK: {input_path}", flush=True)
+        
+        import addon_utils
+        try:
+            # Force refresh to make our injected sys.path directories discoverable by Blender
+            addon_utils.modules_refresh()
+        except Exception:
+            pass
+
+        # Build a set of physically present addon module names in this Blender environment
+        available_modules = set()
+        try:
+            for mod in addon_utils.modules():
+                available_modules.add(mod.__name__)
+        except Exception as e:
+            print(f"Note: Dynamic module scan failed: {e}", flush=True)
+
+        potential_addons = []
+        
+        # Discover modules matching "psk_psa" or "psa_psk"
+        for name in available_modules:
+            if "psk_psa" in name or "psa_psk" in name:
+                potential_addons.append(name)
+
+        # Fallback list of traditional and extension names
+        static_fallbacks = [
             "bl_ext.blender_org.io_scene_psk_psa",
             "bl_ext.user_default.io_scene_psk_psa",
+            "bl_ext.user.io_scene_psk_psa",
             "io_scene_psk_psa",
             "io_import_scene_unreal_psa_psk"
         ]
+        for f in static_fallbacks:
+            if f not in potential_addons:
+                potential_addons.append(f)
+
+        # CRITICAL FILTER: Only attempt to enable addons that are physically present in the system.
+        # This completely prevents Blender's internal C-engine from printing "Add-on not loaded" warnings
+        # to the terminal output stream.
+        addons_to_try = [addon for addon in potential_addons if addon in available_modules]
+
+        print(f"Discovered potential PSK importers to try: {addons_to_try}", flush=True)
         
-        import addon_utils
+        enabled_addon = None
+        
+        # Check if any matches are already enabled first
         for addon in addons_to_try:
             try:
-                addon_utils.enable(addon, default_check=True)# type: ignore
-                print(f"Successfully registered and enabled addon: {addon}")
-            except Exception as e:
+                _, already_enabled = addon_utils.check(addon)
+                if already_enabled:
+                    enabled_addon = addon
+                    print(f"PSK addon '{addon}' is already enabled.", flush=True)
+                    break
+            except Exception:
                 pass
+                
+        # If none were already enabled, attempt to enable the first available candidate
+        if not enabled_addon:
+            for addon in addons_to_try:
+                try:
+                    addon_utils.enable(addon, default_set=True)
+                    _, now_enabled = addon_utils.check(addon)
+                    if now_enabled:
+                        enabled_addon = addon
+                        print(f"Successfully registered and enabled addon: {addon}", flush=True)
+                        break
+                except Exception as e:
+                    print(f"Failed to enable addon '{addon}': {e}", flush=True)
             
-        has_darklight = hasattr(bpy.ops, "psk") and hasattr(bpy.ops.psk, "import_file")# type: ignore
-        has_legacy = hasattr(bpy.ops.import_scene, "psk")
+        # Determine raw operator registry presence
+        has_darklight = "psk" in dir(bpy.ops) and "import_file" in dir(bpy.ops.psk) # type: ignore
+        has_legacy = "import_scene" in dir(bpy.ops) and "psk" in dir(bpy.ops.import_scene) # type: ignore
         
-        if not has_darklight and not has_legacy:
-            print("CRITICAL ERROR: No PSK importer addon/extension is registered in this Blender environment.")
+        imported = False
+        
+        # Try modern Darklight/Befzz operator first
+        if has_darklight:
+            try:
+                print("Executing modern 'bpy.ops.psk.import_file' operator...", flush=True)
+                bpy.ops.psk.import_file(filepath=input_path)# type: ignore
+                imported = True
+            except (AttributeError, Exception) as e:
+                print(f"Modern importer executed with an error (possible dummy registry): {e}. Falling back...", flush=True)
+                
+        # Try legacy addon operator as an automatic fallback
+        if not imported and has_legacy:
+            try:
+                print("Executing legacy 'bpy.ops.import_scene.psk' operator...", flush=True)
+                bpy.ops.import_scene.psk(filepath=input_path)# type: ignore
+                imported = True
+            except Exception as e:
+                print(f"Legacy importer failed: {e}", flush=True)
+                
+        if not imported:
+            print("CRITICAL ERROR: No working PSK importer operator could be successfully executed in this environment.", flush=True)
             sys.exit(1)
             
-        if has_darklight:
-            print("Executing modern 'bpy.ops.psk.import_file' operator...")
-            bpy.ops.psk.import_file(filepath=input_path)# type: ignore
-        else:
-            print("Executing legacy 'bpy.ops.import_scene.psk' operator...")
-            bpy.ops.import_scene.psk(filepath=input_path)# type: ignore
     else:
         print(f"Importing FBX: {input_path}")
         bpy.ops.import_scene.fbx(
