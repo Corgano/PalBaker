@@ -1,169 +1,231 @@
 # views/mods_view.py
-import flet as ft
 import os
-
-from controllers.mods_controller import ModsController
-from components.mods.mod_card import ModItem
-from components.mods.dialogs import (
-    create_overwrite_warning_dialog,
-    create_decompile_options_dialog,
-    create_troubleshooting_advisor_dialog
+import asyncio
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, 
+    QScrollArea, QTextEdit, QSplitter, QFrame, QApplication
 )
+from PyQt6.QtCore import Qt, pyqtSignal
+from utils.theme import Theme  # <--- UPDATED
 
-class ModsView:
-    def __init__(self, page: ft.Page, settings: dict):
-        self.main_page = page
+def run_async(coro):
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(coro)
+        else:
+            loop.run_until_complete(coro)
+    except Exception:
+        asyncio.run(coro)
+
+class ModsView(QWidget):
+    render_mods_signal = pyqtSignal(object, bool, str)
+    write_log_signal = pyqtSignal(str, str, bool)
+    set_refresh_state_signal = pyqtSignal(bool)
+    update_card_progress_signal = pyqtSignal(str, str, bool)
+    reset_card_state_signal = pyqtSignal(str, bool)
+    render_empty_signal = pyqtSignal()
+    render_error_signal = pyqtSignal(str)
+    prompt_overwrite_warning_signal = pyqtSignal(object, object)
+    prompt_decompile_options_signal = pyqtSignal(object)
+    prompt_troubleshooting_advisor_signal = pyqtSignal(object)
+
+    def __init__(self, parent_window, settings: dict):
+        super().__init__()
+        self.main_page = parent_window
         self.settings = settings
         
+        # Link the Controller
+        from controllers.mods_controller import ModsController
         self.controller = ModsController(self, settings)
-
-        self.mods_list = ft.ListView(expand=True, spacing=10)
-        self.log_view = ft.ListView(expand=True, spacing=2, auto_scroll=True)
+        
         self.cached_components = {}
-
-        # FIXED: Add FilePickers to page.services, NOT page.overlay
-        self.icon_picker = ft.FilePicker()
-        self.main_page.services.append(self.icon_picker)
         
-        self.audio_picker = ft.FilePicker()
-        self.main_page.services.append(self.audio_picker)
-
-        self.active_icon_mod_data = None
-        self.search_bar = ft.TextField(
-            label="Search by internal or actual name...",
-            expand=True,
-            on_change=lambda e: self.controller.update_search(self.search_bar.value),
-            prefix_icon=ft.Icons.SEARCH
-        )
+        # Connect thread-safe signals to internal slots
+        self.render_mods_signal.connect(self._render_mods_slot)
+        self.write_log_signal.connect(self._write_log_slot)
+        self.set_refresh_state_signal.connect(self._set_refresh_state_slot)
+        self.update_card_progress_signal.connect(self._update_card_progress_slot)
+        self.reset_card_state_signal.connect(self._reset_card_state_slot)
+        self.render_empty_signal.connect(self._render_empty_slot)
+        self.render_error_signal.connect(self._render_error_slot)
+        self.prompt_overwrite_warning_signal.connect(self._prompt_overwrite_warning_slot)
+        self.prompt_decompile_options_signal.connect(self._prompt_decompile_options_slot)
+        self.prompt_troubleshooting_advisor_signal.connect(self._prompt_troubleshooting_advisor_slot)
         
-        self.badge_chips = ft.Row([
-            ft.Text("Tags:", weight=ft.FontWeight.BOLD),
-            ft.Chip(label=ft.Text("RAW"), on_select=lambda e: self.controller.update_badge_filter("RAW", e.control.selected)),
-            ft.Chip(label=ft.Text("SOURCE"), on_select=lambda e: self.controller.update_badge_filter("SOURCE", e.control.selected)),
-            ft.Chip(label=ft.Text("UE ASSETS"), on_select=lambda e: self.controller.update_badge_filter("UE ASSETS", e.control.selected)),
-            ft.Chip(label=ft.Text("MODIFIED"), on_select=lambda e: self.controller.update_badge_filter("MODIFIED", e.control.selected)),
-        ], spacing=10)
-
-        self.status_chips = ft.Row([
-            ft.Text("Status:", weight=ft.FontWeight.BOLD),
-            ft.Chip(label=ft.Text("Packed"), on_select=lambda e: self.controller.update_status_filter("Packed", e.control.selected)),
-            ft.Chip(label=ft.Text("Packed with Errors"), on_select=lambda e: self.controller.update_status_filter("Packed with Errors", e.control.selected)),
-            ft.Chip(label=ft.Text("Unpacked"), on_select=lambda e: self.controller.update_status_filter("Unpacked", e.control.selected)),
-            ft.Chip(label=ft.Text("Outdated"), on_select=lambda e: self.controller.update_status_filter("Outdated", e.control.selected)),
-        ], spacing=10)
-
-        self.refresh_button = ft.IconButton(
-            icon=ft.Icons.REFRESH, 
-            tooltip="Rescan disk for mods",
-            on_click=lambda e: self.controller.refresh_mods(scan_disk=True)
-        )
-        self.refresh_button.disabled = False
-        self.refresh_spinner = ft.ProgressRing(width=16, height=16, stroke_width=2, visible=False)
-
+        # Layout definition
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        
+        # --- TOP PANEL ---
+        self.top_panel = QWidget()
+        top_layout = QVBoxLayout(self.top_panel)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        
+        search_layout = QHBoxLayout()
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("Search by internal or actual name...")
+        self.search_bar.textChanged.connect(lambda text: self.controller.update_search(text))
+        
+        self.refresh_spinner = QLabel("Loading...")
+        self.refresh_spinner.setStyleSheet(f"color: {Theme.PRIMARY}; font-weight: bold;")  # <--- UPDATED
+        self.refresh_spinner.setVisible(False)
+        
+        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button.clicked.connect(lambda: self.controller.refresh_mods(scan_disk=True))
+        
+        search_layout.addWidget(self.search_bar, 1)
+        search_layout.addWidget(self.refresh_spinner, 0)
+        search_layout.addWidget(self.refresh_button, 0)
+        top_layout.addLayout(search_layout)
+        
+        # Tag Filter Chips
+        self.badge_chips = QHBoxLayout()
+        badge_label = QLabel("Tags:")
+        badge_label.setStyleSheet("font-weight: bold; color: white;")
+        self.badge_chips.addWidget(badge_label)
+        tags = ["RAW", "SOURCE", "UE ASSETS", "MODIFIED"]
+        self.tag_buttons = {}
+        for tag in tags:
+            btn = QPushButton(tag)
+            btn.setCheckable(True)
+            btn.setStyleSheet(Theme.get_chip_style())  # <--- UPDATED
+            btn.toggled.connect(lambda checked, t=tag: self.controller.update_badge_filter(t, checked))
+            self.badge_chips.addWidget(btn)
+            self.tag_buttons[tag] = btn
+        self.badge_chips.addStretch()
+        top_layout.addLayout(self.badge_chips)
+        
+        # Status Filter Chips
+        self.status_chips = QHBoxLayout()
+        status_label = QLabel("Status:")
+        status_label.setStyleSheet("font-weight: bold; color: white;")
+        self.status_chips.addWidget(status_label)
+        statuses = ["Packed", "Packed with Errors", "Unpacked", "Outdated"]
+        self.status_buttons = {}
+        for status in statuses:
+            btn = QPushButton(status)
+            btn.setCheckable(True)
+            btn.setStyleSheet(Theme.get_chip_style())  # <--- UPDATED
+            btn.toggled.connect(lambda checked, s=status: self.controller.update_status_filter(s, checked))
+            self.status_chips.addWidget(btn)
+            self.status_buttons[status] = btn
+        self.status_chips.addStretch()
+        top_layout.addLayout(self.status_chips)
+        
+        # Scroll area
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.mods_list_widget = QWidget()
+        self.mods_list_layout = QVBoxLayout(self.mods_list_widget)
+        self.mods_list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.scroll_area.setWidget(self.mods_list_widget)
+        top_layout.addWidget(self.scroll_area)
+        
+        # --- BOTTOM PANEL ---
+        self.bottom_panel = QWidget()
+        bottom_layout = QVBoxLayout(self.bottom_panel)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        
+        header_layout = QHBoxLayout()
+        console_title = QLabel("Build Console")
+        console_title.setStyleSheet(f"font-size: {Theme.FONT_SIZE_TITLE}; font-weight: bold; color: white;")  # <--- UPDATED
+        
+        copy_btn = QPushButton("Copy Console")
+        copy_btn.clicked.connect(self.copy_console_to_clipboard)
+        
+        header_layout.addWidget(console_title)
+        header_layout.addStretch()
+        header_layout.addWidget(copy_btn)
+        bottom_layout.addLayout(header_layout)
+        
+        self.log_view_widget = QTextEdit()
+        self.log_view_widget.setReadOnly(True)
+        self.log_view_widget.setStyleSheet(Theme.get_console_style())  # <--- UPDATED
+        self.log_view_widget.textChanged.connect(lambda: self.log_view_widget.ensureCursorVisible())
+        bottom_layout.addWidget(self.log_view_widget)
+        
+        # --- SPLITTER ---
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter.addWidget(self.top_panel)
+        self.splitter.addWidget(self.bottom_panel)
+        
         self.console_height = int(settings.get("console_height", 200))
-
-        self.top_panel = ft.Column(
-            expand=True,
-            spacing=10,
-            controls=[
-                ft.Row([self.search_bar, self.refresh_spinner, self.refresh_button]),
-                self.badge_chips,
-                self.status_chips,
-                ft.Container(
-                    self.mods_list, 
-                    expand=True, 
-                    border=ft.Border.all(1, ft.Colors.WHITE10), 
-                    border_radius=10, 
-                    padding=10
-                ),
-            ]
-        )
-
-        self.console_container = ft.Container(
-            content=self.log_view, 
-            expand=True, 
-            bgcolor=ft.Colors.BLACK, 
-            border_radius=10, 
-            padding=15, 
-            border=ft.Border.all(1, ft.Colors.WHITE10)
-        )
-
-        self.divider_handle = ft.GestureDetector(
-            mouse_cursor=ft.MouseCursor.RESIZE_ROW,
-            content=ft.Container(
-                height=15,
-                width=float("inf"),
-                content=ft.Container(
-                    height=2,
-                    width=60,
-                    bgcolor=ft.Colors.WHITE24,
-                    border_radius=1,
-                    alignment=ft.alignment.Alignment(0, 0)
-                ),
-                alignment=ft.alignment.Alignment(0, 0),
-                bgcolor=ft.Colors.TRANSPARENT,
-            ),
-            on_pan_update=self.on_divider_drag,
-            on_pan_end=self.on_divider_drag_end
-        )
-
-        self.bottom_panel = ft.Column(
-            height=self.console_height,
-            spacing=5,
-            controls=[
-                ft.Row([
-                    ft.Text("Build Console", size=16, weight=ft.FontWeight.BOLD),
-                    ft.IconButton(icon=ft.Icons.COPY_ALL, tooltip="Copy console", on_click=self.copy_console_to_clipboard)
-                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                self.console_container
-            ]
-        )
-
-        self.view = ft.Column(
-            expand=True,
-            controls=[
-                self.top_panel,
-                self.divider_handle,
-                self.bottom_panel
-            ]
-        )
-
-    def on_divider_drag(self, e: ft.DragUpdateEvent):
-        delta_y = 0
-        if hasattr(e, "delta_y") and e.delta_y is not None:
-            delta_y = e.delta_y
-        elif hasattr(e, "delta") and e.delta is not None and hasattr(e.delta, "y"):
-            delta_y = e.delta.y
-
-        if delta_y == 0:
-            return
-
-        new_height = max(100, self.bottom_panel.height - delta_y)
-        new_height = min(new_height, 600)  # Ensure it doesn't push the top panel off-screen
+        initial_height = self.main_page.height() if hasattr(self.main_page, 'height') else 800
+        self.splitter.setSizes([initial_height - self.console_height, self.console_height])
+        self.splitter.splitterMoved.connect(self.on_splitter_resized)
         
-        self.bottom_panel.height = new_height
-        self.console_height = new_height
-        self.settings["console_height"] = new_height
-        self.force_update()
+        main_layout.addWidget(self.splitter)
 
-    def on_divider_drag_end(self, e):
-        from utils.config import save_settings
-        save_settings(self.settings)
+    def on_splitter_resized(self, pos, index):
+        sizes = self.splitter.sizes()
+        if len(sizes) > 1:
+            self.console_height = sizes[1]
+            self.settings["console_height"] = self.console_height
+            from utils.config import save_settings
+            save_settings(self.settings)
 
     def run_in_thread(self, func):
-        self.main_page.run_thread(func)
+        import threading
+        t = threading.Thread(target=func, daemon=True)
+        t.start()
 
     def run_async_task(self, func, *args):
-        self.main_page.run_task(func, *args)
+        func(*args)
 
     def clear_ui_cache(self):
+        for item in self.cached_components.values():
+            try:
+                item.deleteLater()
+            except Exception:
+                pass
         self.cached_components.clear()
 
+    # --- THREAD-SAFE PUBLIC SIGNAL WRAPPERS ---
     def render_mods(self, mods_data: list[dict], global_building: bool, active_mod_name: str):
-        self.mods_list.controls.clear()
+        self.render_mods_signal.emit(mods_data, global_building, active_mod_name)
+
+    def write_log(self, text: str, category: str = "standard", flush: bool = True):
+        self.write_log_signal.emit(text, category, flush)
+
+    def set_refresh_state(self, loading: bool):
+        self.set_refresh_state_signal.emit(loading)
+
+    def update_card_progress(self, mod_name: str, line: str, flush: bool):
+        self.update_card_progress_signal.emit(mod_name, line, flush)
+
+    def reset_card_state(self, mod_name: str, success: bool):
+        self.reset_card_state_signal.emit(mod_name, success)
+
+    def render_empty(self):
+        self.render_empty_signal.emit()
+
+    def render_error(self, message: str):
+        self.render_error_signal.emit(message)
+
+    def prompt_overwrite_warning(self, mod_data, confirm_callback):
+        self.prompt_overwrite_warning_signal.emit(mod_data, confirm_callback)
+
+    def prompt_decompile_options(self, mod_data):
+        self.prompt_decompile_options_signal.emit(mod_data)
+
+    def prompt_troubleshooting_advisor(self, summary):
+        self.prompt_troubleshooting_advisor_signal.emit(summary)
+
+    # --- SLOTS ---
+    def _render_mods_slot(self, mods_data: list[dict], global_building: bool, active_mod_name: str):
+        while self.mods_list_layout.count():
+            child = self.mods_list_layout.takeAt(0)
+            widget = child.widget()
+            if widget:
+                widget.hide()
+                widget.setParent(None)
         
         for mod_data in mods_data:
             name = mod_data["name"]
+            
+            from components.mods.mod_card import ModItem
+            
             if name in self.cached_components:
                 item = self.cached_components[name]
                 item.mod_data = mod_data
@@ -184,99 +246,132 @@ class ModsView:
                 item.set_state(global_building, is_active_target=(name == active_mod_name))
                 self.cached_components[name] = item
                 
-            self.mods_list.controls.append(item.view)
+            self.mods_list_layout.addWidget(item)
+            item.show()
+            
         self.force_update()
 
-    async def trigger_icon_picker(self, mod_data):
-        """Asynchronously triggers the file picker and applies the selected icon on success."""
-        result = await self.icon_picker.pick_files(allow_multiple=False, allowed_extensions=["png", "jpg", "jpeg"])
-        if result and len(result) > 0:
-            path = result[0].path
-            # Explicit type guard narrows 'str | None' to 'str' for Pylance
-            if isinstance(path, str):
-                self.controller.apply_custom_icon(mod_data, path)
+    def _write_log_slot(self, text: str, category: str, flush: bool):
+        color_map = {
+            "error": Theme.ERROR, "warning": Theme.WARNING, 
+            "success": Theme.SUCCESS, "stage": Theme.CYAN_ACCENT, "standard": Theme.TEXT_MUTED
+        }  # <--- UPDATED
+        color = color_map.get(category, Theme.TEXT_MUTED)
+        html_line = f"<font color='{color}'>{text}</font><br>"
+        self.log_view_widget.insertHtml(html_line)
+        
+        doc = self.log_view_widget.document()
+        if doc.blockCount() > 250:
+            cursor = self.log_view_widget.textCursor()
+            cursor.movePosition(cursor.MoveOperation.Start)
+            cursor.movePosition(cursor.MoveOperation.Down, cursor.MoveMode.KeepAnchor, 50)
+            cursor.removeSelectedText()
 
+    def _set_refresh_state_slot(self, loading: bool):
+        self.refresh_button.setEnabled(not loading)
+        self.refresh_spinner.setVisible(loading)
+        self.force_update()
 
-    async def trigger_audio_picker(self, mod_data, cry_name):
-        """Asynchronously triggers the file picker for custom cries (Supports WAV, MP3, and OGG)."""
-        result = await self.audio_picker.pick_files(allow_multiple=False, allowed_extensions=["wav", "mp3", "ogg"])
-        if result and len(result) > 0:
-            path = result[0].path
-            # Explicit type guard narrows 'str | None' to 'str' for Pylance
-            if isinstance(path, str):
-                await self.controller.apply_custom_audio(mod_data, cry_name, path)
-
-
-    def update_card_progress(self, mod_name: str, line: str, flush: bool):
+    def _update_card_progress_slot(self, mod_name: str, line: str, flush: bool):
         if mod_name in self.cached_components:
             self.cached_components[mod_name].update_progress(line, flush)
 
-    def reset_card_state(self, mod_name: str, success: bool):
+    def _reset_card_state_slot(self, mod_name: str, success: bool):
         if mod_name in self.cached_components:
             self.cached_components[mod_name].set_state(global_building=False, is_active_target=False, success=success)
 
-    def prompt_overwrite_warning(self, mod_data, confirm_callback):
-        dlg = create_overwrite_warning_dialog(mod_data.get("ue_modified_files", []), lambda e: (self.pop_dialog(), confirm_callback()), lambda e: self.pop_dialog())
-        self.show_dialog(dlg)
+    def _render_empty_slot(self):
+        while self.mods_list_layout.count():
+            child = self.mods_list_layout.takeAt(0)
+            widget = child.widget()
+            if widget:
+                widget.hide()
+                widget.setParent(None)
+        lbl = QLabel("No mods match active filters.")
+        lbl.setStyleSheet(f"color: {Theme.WARNING}; padding: 15px;")  # <--- UPDATED
+        self.mods_list_layout.addWidget(lbl)
+        self.force_update()
 
-    def prompt_decompile_options(self, mod_data):
-        dlg = create_decompile_options_dialog(
-            lambda e: (self.pop_dialog(), self.controller.execute_decompile_pipeline(mod_data, False)),
-            lambda e: (self.pop_dialog(), self.controller.execute_decompile_pipeline(mod_data, True)),
-            lambda e: self.pop_dialog()
+    def _render_error_slot(self, message: str):
+        while self.mods_list_layout.count():
+            child = self.mods_list_layout.takeAt(0)
+            widget = child.widget()
+            if widget:
+                widget.hide()
+                widget.setParent(None)
+        lbl = QLabel(message)
+        lbl.setStyleSheet(f"color: {Theme.ERROR}; padding: 15px;")  # <--- UPDATED
+        self.mods_list_layout.addWidget(lbl)
+        self.force_update()
+
+    def _prompt_overwrite_warning_slot(self, mod_data, confirm_callback):
+        from components.mods.dialogs import create_overwrite_warning_dialog
+        dlg = create_overwrite_warning_dialog(
+            self.main_page,
+            mod_data.get("ue_modified_files", []), 
+            confirm_callback,
+            lambda: None
         )
         self.show_dialog(dlg)
 
-    def prompt_troubleshooting_advisor(self, summary):
-        dlg = create_troubleshooting_advisor_dialog(summary, lambda e: self.pop_dialog())
+    def _prompt_decompile_options_slot(self, mod_data):
+        from components.mods.dialogs import create_decompile_options_dialog
+        dlg = create_decompile_options_dialog(
+            self.main_page,
+            lambda: self.controller.execute_decompile_pipeline(mod_data, False),
+            lambda: self.controller.execute_decompile_pipeline(mod_data, True),
+            lambda: None
+        )
         self.show_dialog(dlg)
 
-    def set_refresh_state(self, loading: bool):
-        self.refresh_button.disabled = loading
-        self.refresh_spinner.visible = loading
-        self.force_update()
+    def _prompt_troubleshooting_advisor_slot(self, summary):
+        from components.mods.dialogs import create_troubleshooting_advisor_dialog
+        dlg = create_troubleshooting_advisor_dialog(
+            self.main_page,
+            summary, 
+            lambda: None
+        )
+        self.show_dialog(dlg)
 
-    def set_log_autoscroll(self, enabled: bool):
-        self.log_view.auto_scroll = enabled
-        self.force_update()
+    # --- SYNCHRONOUS PICKER TRIGGERS ---
+    def trigger_icon_picker(self, mod_data):
+        from PyQt6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Icon File", "", "Images (*.png *.jpg *.jpeg)"
+        )
+        if path:
+            if asyncio.iscoroutinefunction(self.controller.apply_custom_icon):
+                run_async(self.controller.apply_custom_icon(mod_data, path))
+            else:
+                self.controller.apply_custom_icon(mod_data, path)
 
-    def write_log(self, text: str, category: str = "standard", flush: bool = True):
-        color_map = {
-            "error": ft.Colors.RED_400, "warning": ft.Colors.ORANGE_400, 
-            "success": ft.Colors.GREEN_400, "stage": ft.Colors.CYAN_400, "standard": ft.Colors.WHITE70
-        }
-        self.log_view.controls.append(ft.Text(text, color=color_map.get(category, ft.Colors.WHITE70), size=12, font_family="Consolas"))
-        if len(self.log_view.controls) > 100:
-            self.log_view.controls = self.log_view.controls[-100:]
-        if flush: self.force_update()
+    def trigger_audio_picker(self, mod_data, cry_name):
+        from PyQt6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Audio File", "", "Audio (*.wav *.mp3 *.ogg)"
+        )
+        if path:
+            if asyncio.iscoroutinefunction(self.controller.apply_custom_audio):
+                run_async(self.controller.apply_custom_audio(mod_data, cry_name, path))
+            else:
+                self.controller.apply_custom_audio(mod_data, cry_name, path)
 
-    def render_empty(self):
-        self.mods_list.controls.clear()
-        self.mods_list.controls.append(ft.Text("No mods match active filters.", color=ft.Colors.YELLOW_400))
-        self.force_update()
-
-    def render_error(self, message: str):
-        self.mods_list.controls.clear()
-        self.mods_list.controls.append(ft.Text(message, color=ft.Colors.RED_400))
-        self.force_update()
-
-    def show_dialog(self, dlg: ft.AlertDialog):
-        self.main_page.show_dialog(dlg)
+    def show_dialog(self, dlg):
+        if hasattr(dlg, 'exec'):
+            dlg.exec()
 
     def pop_dialog(self):
-        self.main_page.pop_dialog()
+        pass
 
     def force_update(self):
-        try: self.view.update()
-        except Exception: pass
+        self.update()
 
-    async def copy_console_to_clipboard(self, e):
-        log_lines = [ctrl.value for ctrl in self.log_view.controls if isinstance(ctrl, ft.Text) and ctrl.value]
-        full_log = "\n".join(log_lines)
-        if full_log.strip():
-            await ft.Clipboard().set(full_log)
-            self.main_page.overlay.append(ft.SnackBar(ft.Text("Console content copied!"), open=True))
-        self.main_page.update()
+    def copy_console_to_clipboard(self):
+        plain_text = self.log_view_widget.toPlainText()
+        if plain_text.strip():
+            clipboard = QApplication.clipboard()
+            clipboard.setText(plain_text)
+            self.main_page.statusBar().showMessage("Console content copied!", 3000)
 
     def refresh_mods(self, scan_disk: bool = True):
         self.controller.refresh_mods(scan_disk)

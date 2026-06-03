@@ -1,31 +1,32 @@
 # components/common/path_picker.py
-import flet as ft
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QPushButton
+from utils.theme import Theme  # <--- UPDATED
 
-class PathPicker:
-    # FIXED: Removed the narrow ': str' type constraint from the 'icon' parameter 
-    # to allow Flet's native 'IconData' constants without causing type checker errors.
-    def __init__(self, label: str, value: str, icon, on_browse_click):
-        self.text_field = ft.TextField(
-            label=label, 
-            value=value, 
-            expand=True,
-            on_change=self._on_text_change
-        )
-        self.button = ft.IconButton(icon, on_click=on_browse_click)
+class PathPicker(QWidget):
+    def __init__(self, label: str, value: str, icon=None, on_browse_click=None):
+        super().__init__()
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
         
-        # Expose the layout tree
-        self.view = ft.Row([self.text_field, self.button])
+        self.text_field = QLineEdit(value)
+        self.text_field.setPlaceholderText(label)
+        self.text_field.textChanged.connect(self._on_text_change)
+        
+        self.button = QPushButton("Browse")
+        if on_browse_click:
+            self.button.clicked.connect(on_browse_click)
+            
+        layout.addWidget(self.text_field, 1)
+        layout.addWidget(self.button, 0)
+        
+        self.view = self
 
-    def _on_text_change(self, e):
-        # Update the internal value when typed manually
-        self.text_field.value = e.control.value
+    def _on_text_change(self, text):
+        pass
 
     def get_value(self) -> str:
-        return str(self.text_field.value)
+        return self.text_field.text()
 
     def set_value(self, value: str):
-        self.text_field.value = value
-        try:
-            self.text_field.update()
-        except Exception:
-            pass
+        self.text_field.setText(value)

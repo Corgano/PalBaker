@@ -1,166 +1,142 @@
-# manager.py (Top Imports)
-import flet as ft
+# manager.py
+import sys
+import os
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QTabWidget, QVBoxLayout, QWidget, QMessageBox
+)
+from PyQt6.QtCore import QTimer, QSize
+from PyQt6.QtGui import QIcon
+
 from utils.config import load_settings, save_settings
 from utils.autofill_helper import detect_unreal_engine, detect_palworld_exe, find_blender_versions
-from views.settings_view import SettingsView  # UPDATED: Import from views
-from views.mods_view import ModsView          # UPDATED: Import from views
+from views.settings_view import SettingsView
+from views.mods_view import ModsView
 from utils.builder.config_helper import restore_palbaker_backup
-import flet as ft
+from utils.theme import Theme  # <--- UPDATED
 
-def main(page: ft.Page):
-    page.title = "Palworld Baker Mod Manager"
-    page.theme_mode = ft.ThemeMode.DARK
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Palworld Baker Mod Manager")
+        
+        # Load state
+        self.settings = load_settings()
+        
+        # Set window size
+        width = int(self.settings.get("window_width", 900))
+        height = int(self.settings.get("window_height", 800))
+        self.resize(width, height)
+        
+        # Restore backup immediately on startup
+        uproject_path = self.settings.get("uproject")
+        if isinstance(uproject_path, str):
+            restore_palbaker_backup(uproject_path)
 
-    # Load state
-    settings = load_settings()
+        # Tabs container (Mimics TabBar + TabBarView in Flet)
+        self.tabs = QTabWidget()
+        self.setCentralWidget(self.tabs)
+        
+        # Mount views
+        self.mods_view = ModsView(self, self.settings)
+        self.settings_view = SettingsView(self, self.settings, on_save_callback=self.mods_view.refresh_mods)
+        
+        self.tabs.addTab(self.mods_view, "Manager")
+        self.tabs.addTab(self.settings_view, "Settings")
+        
+        # Initialize native status bar for SnackBar fallback messages
+        self.statusBar().setStyleSheet(f"color: {Theme.TEXT_MUTED}; background-color: {Theme.BG_MAIN};")
+        
+        # Apply complete application-wide dark stylesheet
+        self.setStyleSheet(Theme.get_global_stylesheet())  # <--- UPDATED
+        
+        # Autofill settings if empty
+        self.run_autofills()
+        
+        # Periodic save timer (30 seconds) on Qt's main event loop (safer than raw background threads)
+        self.last_saved_settings = self.settings.copy()
+        self.save_timer = QTimer(self)
+        self.save_timer.timeout.connect(self.periodic_save)
+        self.save_timer.start(30000)
+        
+        # Check and handle multiple Blender paths
+        self.check_multiple_blenders()
+        
+        # Initial scan
+        self.mods_view.refresh_mods()
 
-    # Set initial window size from settings
-    page.window.width = int(settings.get("window_width", 900))
-    page.window.height = int(settings.get("window_height", 800))
-    page.padding = 20
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.settings["window_width"] = int(self.width())
+        self.settings["window_height"] = int(self.height())
+        save_settings(self.settings)
 
-    # Persist window resize/move events
-    def on_window_event(e):
-        if e.data == "resized" or e.data == "moved":
-            settings["window_width"] = int(page.window.width)
-            settings["window_height"] = int(page.window.height)
-            save_settings(settings)
-    
-    page.on_window_event = on_window_event
+    def periodic_save(self):
+        if self.settings != self.last_saved_settings:
+            save_settings(self.settings)
+            self.last_saved_settings = self.settings.copy()
+            print("Periodic settings save triggered.")
 
-    # Periodic background save timer (every 30 seconds)
-    import threading
-    import time
-    stop_event = threading.Event()
+    def run_autofills(self):
+        changed = False
+        # Unreal Engine
+        if not self.settings.get("ue_root"):
+            detected_ue = detect_unreal_engine()
+            if detected_ue:
+                print(f"Auto-detected Unreal Engine location as: '{detected_ue}'")
+                self.settings["ue_root"] = detected_ue
+                changed = True
+        
+        # Palworld
+        if not self.settings.get("palworld_exe"):
+            detected_pal = detect_palworld_exe()
+            if detected_pal:
+                print(f"Auto-detected Palworld.exe location as: '{detected_pal}'")
+                self.settings["palworld_exe"] = detected_pal
+                changed = True
+                    
+        # Blender
+        self.blender_versions = find_blender_versions()
+        blender_path = self.settings.get("blender")
+        if not blender_path or blender_path == "blender":
+            if len(self.blender_versions) == 1:
+                print(f"Auto-detected single Blender installation: '{self.blender_versions[0]}'")
+                self.settings["blender"] = self.blender_versions[0]
+                changed = True
+        
+        if changed:
+            save_settings(self.settings)
+            self.settings_view.update_settings(self.settings)
 
-    def periodic_save_thread():
-        last_save_settings = settings.copy()
-        while not stop_event.wait(timeout=30):
-            if settings != last_save_settings:
-                save_settings(settings)
-                last_save_settings = settings.copy()
-                print("Periodic settings save triggered.")
-
-    save_thread = threading.Thread(target=periodic_save_thread, daemon=True)
-    save_thread.start()
-
-    def on_page_close(e):
-        stop_event.set()
-        save_thread.join(timeout=1.0)
-
-    page.on_close = on_page_close
-
-    # FIX: Automatically restore any stranded backups immediately on UI launch
-    uproject_path = settings.get("uproject")
-    if isinstance(uproject_path, str):
-        restore_palbaker_backup(uproject_path)
-
-    # Mount decoupled UI controllers
-    mods_view = ModsView(page, settings)
-    settings_view = SettingsView(page, settings, on_save_callback=mods_view.refresh_mods)
-
-    # Autofill settings if empty
-    changed = False
-    
-    # Unreal Engine
-    if not settings.get("ue_root"):
-        detected_ue = detect_unreal_engine()
-        if detected_ue:
-            print(f"Auto-detected Unreal Engine location as: '{detected_ue}'")
-            settings["ue_root"] = detected_ue
-            changed = True
-        else:
-            print("Could not auto-detect Unreal Engine location.")
-    else:
-        print(f"Unreal Engine location already defined as: '{settings.get('ue_root')}' - skipping autofill.")
-    
-    # Palworld
-    if not settings.get("palworld_exe"):
-        detected_pal = detect_palworld_exe()
-        if detected_pal:
-            print(f"Auto-detected Palworld.exe location as: '{detected_pal}'")
-            settings["palworld_exe"] = detected_pal
-            changed = True
-        else:
-            print("Could not auto-detect Palworld.exe location.")
-    else:
-        print(f"Palworld.exe location already defined as: '{settings.get('palworld_exe')}' - skipping autofill.")
+    def check_multiple_blenders(self):
+        blender_path = self.settings.get("blender")
+        if hasattr(self, "blender_versions") and len(self.blender_versions) > 1 and (not blender_path or blender_path == "blender"):
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Multiple Blender Versions Detected")
+            msg_box.setText("Please select the Blender version to use:")
+            msg_box.setStyleSheet(f"QLabel {{ color : {Theme.TEXT_MAIN}; }}")  # <--- UPDATED
             
-    # Blender Autofill
-    blender_versions = find_blender_versions()
-    blender_path = settings.get("blender")
-    if blender_path and blender_path != "blender":
-        print(f"Blender location already defined as: '{blender_path}' - skipping autofill.")
-    elif len(blender_versions) == 1:
-        print(f"Auto-detected single Blender installation: '{blender_versions[0]}'")
-        settings["blender"] = blender_versions[0]
-        changed = True
-    elif len(blender_versions) > 1:
-        print(f"Auto-detected multiple Blender paths: {blender_versions}")
-    else:
-        print("Could not auto-detect any Blender installations.")
-    
-    if changed:
-        save_settings(settings)
-        settings_view.update_settings(settings)
+            buttons = {}
+            for v in self.blender_versions:
+                btn = msg_box.addButton(v, QMessageBox.ButtonRole.ActionRole)
+                buttons[btn] = v
+            
+            msg_box.exec()
+            clicked_button = msg_box.clickedButton()
+            if clicked_button in buttons:
+                selected = buttons[clicked_button]
+                self.settings["blender"] = selected
+                save_settings(self.settings)
+                self.settings_view.update_settings(self.settings)
 
-    # FIX: Automatically restore any stranded backups immediately on UI launch
+    def closeEvent(self, event):
+        save_settings(self.settings)
+        super().closeEvent(event)
 
-    # Flet 0.85+ Tabs Architecture
-    tab_bar = ft.TabBar(
-        tabs=[
-            ft.Tab(label="Manager", icon=ft.Icons.WIDGETS),
-            ft.Tab(label="Settings", icon=ft.Icons.SETTINGS),
-        ]
-    )
-
-    tab_view = ft.TabBarView(
-        expand=True,
-        controls=[
-            mods_view.view,       # Mount the layout columns here
-            settings_view.view,   # Mount the layout columns here
-        ]
-    )
-
-    tabs_controller = ft.Tabs(
-        length=2,
-        selected_index=0,
-        expand=True,
-        content=ft.Column(
-            expand=True,
-            controls=[
-                tab_bar,
-                tab_view
-            ]
-        )
-    )
-
-    page.add(tabs_controller)
-    
-    # Prompt for Blender version if multiple found
-    blender_path = settings.get("blender")
-    if len(blender_versions) > 1 and (not blender_path or blender_path == "blender"):
-        def on_blender_selected(e):
-            selected = e.control.data
-            print(f"User picked Blender path: '{selected}'")
-            settings["blender"] = selected
-            save_settings(settings)
-            settings_view.update_settings(settings) # Added this
-            dlg.open = False
-            page.update()
-            page.overlay.append(ft.SnackBar(ft.Text(f"Blender set to: {selected}")))
-            page.update()
-
-        dlg = ft.AlertDialog(
-            title=ft.Text("Multiple Blender Versions Detected"),
-            content=ft.Column(
-                [ft.Text("Please select the Blender version to use:")] + 
-                [ft.ElevatedButton(content=ft.Text(v), data=v, on_click=on_blender_selected) for v in blender_versions]
-            )
-        )
-        page.show_dialog(dlg)
-
-    mods_view.refresh_mods()
+def main():
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
-    ft.run(main)
+    main()
